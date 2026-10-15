@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { monotonicFactory } from 'ulid';
 import { isValidSlug, slugify } from '../../shared/slug.js';
 import { type ActionContext, scriptEnv, startAction } from '../actions/service.js';
+import { editorCommand, openInEditor } from '../actions/editor.js';
 import { findAssetDir } from '../assets.js';
 import type { AidConfig } from '../config.js';
 import type { Db } from '../db.js';
@@ -16,8 +17,8 @@ const FIVE_MIN = 5 * 60_000;
 const TWO_MIN = 2 * 60_000;
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
 
-// Actions d'un sujet connues en v0.1 (l'ouverture dans l'éditeur arrive en 02.5)
-export const TOPIC_ACTIONS = ['topic.cleanup'] as const;
+// Actions d'un sujet connues en v0.1
+export const TOPIC_ACTIONS = ['topic.cleanup', 'editor.open'] as const;
 
 const CreateBody = Type.Object(
   {
@@ -152,6 +153,20 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
     const ws = deps.db
       .prepare('SELECT * FROM workspaces WHERE id = ?')
       .get(topic.workspace_id) as WorkspaceRow;
+
+    if (actionId === 'editor.open') {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const cmd = editorCommand(deps.config.editor);
+      try {
+        await openInEditor(cmd, topic.worktree);
+      } catch (err) {
+        throw new AidHttpError(
+          422,
+          `impossible de lancer l'éditeur (${cmd.join(' ')}) : ${(err as Error).message}. Régler « editor » dans ~/.aid/config.yaml.`,
+        );
+      }
+      return reply.code(204).send();
+    }
 
     const body = (req.body ?? {}) as { confirmUnmerged?: number };
     if (topic.state === 'archived') throw new AidHttpError(409, 'ce sujet est déjà archivé');

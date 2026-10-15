@@ -14,9 +14,12 @@ export interface Ctx {
 }
 
 export async function setupWorkspace(
-  opts: { codegraph?: boolean; bin?: string } = {},
+  opts: { codegraph?: boolean; bin?: string; editor?: string[] } = {},
 ): Promise<Ctx> {
-  const t = await startTestDaemon(undefined, { codegraphBin: opts.bin ?? FAKE_CODEGRAPH });
+  const t = await startTestDaemon(undefined, {
+    codegraphBin: opts.bin ?? FAKE_CODEGRAPH,
+    config: opts.editor ? { editor: opts.editor } : undefined,
+  });
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'aid-tc-')));
   const repo = makeOriginAndClone(dir, { codegraph: opts.codegraph });
   const res = await t.d.app.inject({
