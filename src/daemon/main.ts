@@ -47,6 +47,7 @@ export async function startDaemon(
       auth,
       db: opened,
       store,
+      paths,
       devOrigin,
       logger: opts.logger,
     });

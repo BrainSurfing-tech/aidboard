@@ -8,6 +8,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { AidConfig } from './config.js';
 import type { Db } from './db.js';
 import type { EventStore } from './events/store.js';
+import { AidHttpError } from './errors.js';
+import type { AidPaths } from './paths.js';
+import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
 import { type AuthState, registerSecurity } from './security.js';
@@ -18,6 +21,8 @@ export interface ServerDeps {
   auth: AuthState;
   db: Db;
   store: EventStore;
+  paths: AidPaths;
+  procVersion?: () => string | null;
   devOrigin?: string;
   webRoot?: string | null;
   logger?: boolean;
@@ -40,7 +45,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     getPort: () => (app.server.address() as AddressInfo | null)?.port ?? deps.config.port,
     devOrigin: deps.devOrigin,
   });
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof AidHttpError)
+      return reply.code(err.status).send({ error: err.message, ...err.extra });
+    const e = err as { statusCode?: number; message: string };
+    if (e.statusCode && e.statusCode < 500)
+      return reply.code(e.statusCode).send({ error: e.message });
+    app.log.error(err);
+    return reply.code(500).send({ error: 'erreur interne' });
+  });
   registerStateRoutes(app, deps.db);
+  registerWorkspaceRoutes(app, deps);
   registerEventRoutes(app, deps.db, deps.store);
   registerEventSocket(app, deps.store);
   const webRoot = deps.webRoot === undefined ? defaultWebRoot() : deps.webRoot;
