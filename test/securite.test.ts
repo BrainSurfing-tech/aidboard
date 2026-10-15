@@ -6,10 +6,13 @@ import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
 import { afterEach, expect, test } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/daemon/config.js';
+import { openDb } from '../src/daemon/db.js';
+import { EventStore } from '../src/daemon/events/store.js';
 import { type AuthState, createAuthState, issueRunToken } from '../src/daemon/security.js';
 import { buildServer } from '../src/daemon/server.js';
 
 let app: FastifyInstance;
+let db: ReturnType<typeof openDb>;
 let auth: AuthState;
 let port: number;
 
@@ -17,11 +20,15 @@ async function start() {
   auth = createAuthState();
   const webRoot = mkdtempSync(join(tmpdir(), 'aid-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<p>ok</p>');
-  app = await buildServer({ config: { ...DEFAULT_CONFIG, port: 0 }, auth, webRoot });
-  app.get('/api/state', async () => ({ ok: true }));
-  app.post('/api/events', async (_req, reply) => reply.code(202).send({}));
+  db = openDb(join(webRoot, 'state.db'));
+  app = await buildServer({
+    config: { ...DEFAULT_CONFIG, port: 0 },
+    auth,
+    db,
+    store: new EventStore(db),
+    webRoot,
+  });
   app.post('/api/topics', async () => ({ ok: true }));
-  app.get('/ws/events', { websocket: true }, () => {});
   await app.listen({ host: '127.0.0.1', port: 0 });
   port = (app.server.address() as AddressInfo).port;
 }
@@ -159,14 +166,19 @@ test('token de run : POST /api/events pour un autre runId refusé, pour le sien 
     method: 'POST',
     url: '/api/events',
     headers: h,
-    payload: { runId: 'run_2' },
+    payload: { source: 'hook:claude', type: 'agent.status', data: {}, runId: 'run_2' },
   });
   expect(autre.statusCode).toBe(403);
+  db.prepare("INSERT INTO workspaces VALUES ('ws_1','a','/a','main','/w','t')").run();
+  db.prepare(
+    "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s','active',NULL,'disabled','t','t')",
+  ).run();
+  db.prepare("INSERT INTO runs VALUES ('run_1','tp_1','standard','open','t')").run();
   const sien = await app.inject({
     method: 'POST',
     url: '/api/events',
     headers: h,
-    payload: { runId: 'run_1' },
+    payload: { source: 'hook:claude', type: 'agent.status', data: {}, runId: 'run_1' },
   });
   expect(sien.statusCode).toBe(202);
 });

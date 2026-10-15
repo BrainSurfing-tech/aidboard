@@ -86,6 +86,16 @@ export class EventStore extends EventEmitter {
     return stored.event;
   }
 
+  // Message non persisté (sortie d'action, etc.) : relayé aux sockets, jamais rejoué.
+  emitEphemeral(msg: {
+    kind: 'ephemeral';
+    type: string;
+    topicId?: string;
+    [k: string]: unknown;
+  }): void {
+    this.emit('ephemeral', msg);
+  }
+
   since(afterId: string | null, filter: { topicId?: string; runId?: string } = {}): StoredEvent[] {
     const after = afterId
       ? (this.db.prepare('SELECT seq FROM events WHERE id = ?').get(afterId) as
