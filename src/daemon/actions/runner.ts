@@ -34,14 +34,14 @@ export function runScript(o: RunScriptOptions): Promise<ScriptOutcome> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      log.end();
       const outcome =
         !signaled && exitCode === 0
           ? 'succeeded'
           : !signaled && exitCode === 2
             ? 'needs_human'
             : 'failed';
-      resolve({ exitCode, outcome, result, tail, ...(reason && { reason }) });
+      // l'action n'est terminée qu'une fois son journal écrit
+      log.end(() => resolve({ exitCode, outcome, result, tail, ...(reason && { reason }) }));
     };
 
     const child = spawn('bash', [o.script], {
