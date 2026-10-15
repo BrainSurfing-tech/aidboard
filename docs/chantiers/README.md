@@ -31,13 +31,14 @@ l'est pas encore bloque les points qui en dépendent.
 | D13 | **Écrans non maquettés** | Aucune maquette ne couvre « enregistrer un workspace » ni « créer un sujet ». | Deux dialogues sobres, construits uniquement avec les variables CSS des maquettes. Pas de nouvelle maquette pour la v0.1. | 04 |
 | D14 | **Statut d'agent en v0.1** | Les statuts fins arrivent en v0.2. Afficher « En cours » pour un agent qui attend en réalité une permission serait un repli silencieux. | En v0.1, un agent vivant est en `starting` et s'affiche « Lancé · statut non suivi », en gris, sans pastille de couleur. À sa sortie, il passe en `done`, `error` ou `stopped`. | 03, 04 |
 
-### Prérequis machine constaté le 2026-10-15 (`bootstrap-machine.sh --check`)
+### Prérequis machine (état au 2026-10-15)
 
-| Constat | Effet | À décider par Julien |
+| Constat | Effet | Suite |
 | --- | --- | --- |
-| gbrain **0.60.16** installé, **0.57.0** épinglé par le noyau 0.7.1 | Bloquant selon le noyau et le brief (§6) pour tout agent qui écrit en mémoire. Un développement sans écriture mémoire (le code des chantiers 00 à 05) n'est pas concerné. | Revenir à 0.57.0, ou relever l'épingle dans le noyau (le cerveau est partagé : pas une décision d'agent). |
+| gbrain **0.60.249.0** installé ; le noyau **0.8.0** (branche locale `chore/gbrain-0.60.249` d'agent-kernel, non poussée) en relève l'épingle | `bootstrap-machine.sh --check` : « Machine prête ». Le projet reste épinglé en noyau 0.7.1 (`agent.yml`) tant que la 0.8.0 n'est pas mergée. | Merger le noyau 0.8.0, puis `/sync` dans A-I-D. |
+| Migration de données gbrain v0.13.1 **partielle** (449 pages sur 1440 en `source_changed`, 15 migrations en attente) | Lecture OK, `write_through` à `false`. Rejouer la migration réécrit du frontmatter dans les dépôts sources : voir la note du noyau. | **À décider par Julien** avant de la rejouer. |
 | Source gbrain `aid` absente | Les pages `aid/plan/…` n'ont nulle part où s'écrire. | `gbrain sources add` (fédérée ou isolée : à choisir), puis `.gbrain-source`. |
-| codegraph 1.6.2, épinglé 1.6.0 | Simple avertissement. | — |
+| codegraph 1.6.2, épinglé 1.6.0 | Simple avertissement. | Ne pas relancer tout `bootstrap-machine.sh` : il le redescendrait. |
 | Pas d'index `.codegraph/` dans `a-i-d` | Les agents lisent directement (repli déclaré). | `codegraph init` quand le code existera (chantier 01). |
 
 ## 2. Registre des risques anticipés
