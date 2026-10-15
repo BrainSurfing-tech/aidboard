@@ -54,7 +54,16 @@ interface TopicRow {
 export class AgentManager {
   private live = new Map<string, LiveAgent>();
 
-  constructor(private readonly deps: ManagerDeps) {}
+  constructor(private readonly deps: ManagerDeps) {
+    // un sujet archivé n'a plus d'écran à rejouer : on libère ses miroirs
+    deps.store.on(
+      'event',
+      (e: { type: string; topicId?: string; data: Record<string, unknown> }) => {
+        if (e.type === 'topic.state' && e.data.state === 'archived' && e.topicId)
+          this.forgetTopic(e.topicId);
+      },
+    );
+  }
 
   get(agentId: string): LiveAgent | undefined {
     return this.live.get(agentId);
@@ -188,24 +197,36 @@ export class AgentManager {
     };
   }
 
+  // Arrêt par paliers : SIGINT puis SIGTERM (la spec), SIGHUP pour un shell interactif qui ignore SIGTERM,
+  // et SIGKILL du groupe entier à l'échéance (claude lance des serveurs MCP et codegraph en enfants).
   stop(agentId: string, reason: StopReason, graceMs = 5000): Promise<void> {
     const a = this.live.get(agentId);
     if (!a || a.exited) return Promise.resolve();
     a.stopReason = reason;
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        // le groupe entier : claude lance des serveurs MCP et codegraph en enfants
-        try {
-          process.kill(-a.pty.pid, 'SIGKILL');
-        } catch {
-          a.pty.kill('SIGKILL');
-        }
-      }, graceMs);
+      const timers: NodeJS.Timeout[] = [];
+      const steps: Array<[number, NodeJS.Signals]> = [
+        [0, 'SIGINT'],
+        [1000, 'SIGTERM'],
+        [2000, 'SIGHUP'],
+      ];
+      for (const [after, signal] of steps) {
+        if (after >= graceMs) continue;
+        timers.push(setTimeout(() => !a.exited && a.pty.kill(signal), after));
+      }
+      timers.push(
+        setTimeout(() => {
+          try {
+            process.kill(-a.pty.pid, 'SIGKILL');
+          } catch {
+            a.pty.kill('SIGKILL');
+          }
+        }, graceMs),
+      );
       a.onExitCallbacks.add(() => {
-        clearTimeout(timer);
+        for (const t of timers) clearTimeout(t);
         resolve();
       });
-      a.pty.kill('SIGHUP');
     });
   }
 
@@ -221,6 +242,10 @@ export class AgentManager {
       a.mirror.dispose();
       this.live.delete(agentId);
     }
+  }
+
+  forgetTopic(topicId: string): void {
+    for (const a of [...this.live.values()]) if (a.topicId === topicId) this.forget(a.id);
   }
 
   /** Taille imposée par le client qui a la main ; une taille absurde est ignorée. */
