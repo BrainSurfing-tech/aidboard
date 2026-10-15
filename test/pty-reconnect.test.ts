@@ -1,14 +1,12 @@
 import { join } from 'node:path';
-import { Terminal } from '@xterm/headless';
 import { afterEach, expect, test } from 'vitest';
 import { attachClient } from '../src/daemon/pty/attach.js';
 import { TerminalMirror } from '../src/daemon/pty/mirror.js';
 import { waitFor } from './helpers/daemon.js';
+import { COLS, Replica, ROWS } from './helpers/replica.js';
 import { type Ctx, makeTopic, setupWorkspace } from './helpers/topics.js';
 
 const FAKE_AGENT = join(import.meta.dirname, 'fixtures/fake-agent.sh');
-const COLS = 120;
-const ROWS = 32;
 const saved = process.env.SHELL;
 let c: Ctx;
 
@@ -16,32 +14,6 @@ afterEach(async () => {
   process.env.SHELL = saved;
   await c?.t.d.stop();
 });
-
-// Ce que voit un navigateur : un terminal qui ne reçoit que les octets envoyés par attachClient.
-class Replica {
-  readonly term = new Terminal({
-    cols: COLS,
-    rows: ROWS,
-    scrollback: 5000,
-    allowProposedApi: true,
-  });
-  feed = (data: string) => this.term.write(data);
-  flush = () => new Promise<void>((r) => this.term.write('', r));
-  lines(): string[] {
-    const buf = this.term.buffer.active;
-    return Array.from(
-      { length: buf.length },
-      (_, i) => buf.getLine(i)?.translateToString(true) ?? '',
-    );
-  }
-  screen(): string[] {
-    const buf = this.term.buffer.active;
-    return Array.from(
-      { length: ROWS },
-      (_, i) => buf.getLine(buf.viewportY + i)?.translateToString(true) ?? '',
-    );
-  }
-}
 
 async function start(shell: string) {
   process.env.SHELL = shell;

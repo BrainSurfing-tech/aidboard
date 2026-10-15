@@ -19,6 +19,7 @@ import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
 import { type AuthState, registerSecurity } from './security.js';
 import { registerEventSocket } from './ws/events.js';
+import { registerPtySocket } from './ws/pty.js';
 
 export interface ServerDeps {
   config: AidConfig;
@@ -77,6 +78,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   registerEventRoutes(app, deps.db, deps.store);
   registerEventSocket(app, deps.store);
+  registerPtySocket(app, {
+    db: deps.db,
+    paths: deps.paths,
+    config: deps.config,
+    agents: deps.agents,
+  });
   const webRoot = deps.webRoot === undefined ? defaultWebRoot() : deps.webRoot;
   if (webRoot) {
     await app.register(fastifyStatic, { root: webRoot });
