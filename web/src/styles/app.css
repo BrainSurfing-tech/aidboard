@@ -1,0 +1,12 @@
+/* Adaptations à l'application ; maquette.css reste identique à celle des maquettes. */
+body {
+  margin: 0;
+}
+.cadre[data-viewport] {
+  width: 100%;
+  min-height: 100vh;
+}
+.erreur-plein-ecran {
+  padding: var(--sp-8, 32px);
+  max-width: 640px;
+}
