@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -73,4 +73,13 @@ test('une migration qui échoue ne laisse rien et ne change pas la version', () 
   expect(() => openDb(path, migs)).toThrow();
   const db = new Database(path);
   expect(db.pragma('user_version', { simple: true })).toBe(0);
+});
+
+test('le fichier de base est en 0600, wal compris', () => {
+  const path = join(tmp(), 'state.db');
+  const db = openDb(path);
+  db.prepare("INSERT INTO workspaces VALUES ('ws_1','a','/a','main','/w','t')").run();
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+  expect(statSync(`${path}-wal`).mode & 0o777).toBe(0o600);
+  db.close();
 });
