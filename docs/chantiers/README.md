@@ -87,19 +87,18 @@ lit ici et dans la section « Pièges » de chaque plan.
 
 ## 3. Ordre et branches
 
-Branches empilées : chacune part de la précédente, et sa PR vise la branche parente.
+Branches empilées : chacune part de la précédente, et sa PR vise la branche parente. **État au 2026-10-16 : les six
+chantiers sont exécutés en local (rien n'est poussé, aucune PR ouverte).**
 
-| N° | Chantier | Branche | Base de la PR | Modèle exécutant |
+| N° | Chantier | Branche | Base de la PR | État |
 | --- | --- | --- | --- | --- |
-| 00 | [Amorçage du dépôt](00-amorcage.md) | `chore/amorcage` | `main` | standard |
-| 01 | [Daemon : état, journal, sécurité](01-daemon-etat-securite.md) | `feat/daemon-socle` | `chore/amorcage` | standard |
-| 02 | [Workspaces, sujets et worktrees](02-workspaces-sujets.md) | `feat/sujets-worktrees` | `feat/daemon-socle` | standard |
-| 03 | [Terminaux persistants](03-terminaux-persistants.md) | `feat/terminaux` | `feat/sujets-worktrees` | **complexe** |
-| 04 | [Interface v0.1](04-interface.md) | `feat/interface-socle` | `feat/terminaux` | standard |
-| 05 | [CLI, distribution et recette](05-cli-distribution-recette.md) | `feat/cli-recette` | `feat/interface-socle` | standard |
-
-On peut paralléliser une partie : 04 peut démarrer sur une API simulée dès que 01 est
-livré, mais 04.4 (terminaux) attend 03.
+| 00 | [Amorçage du dépôt](00-amorcage.md) | `chore/amorcage` | `main` | fait |
+| 01 | [Daemon : état, journal, sécurité](01-daemon-etat-securite.md) | `feat/daemon-socle` | `chore/amorcage` | fait |
+| 02 | [Workspaces, sujets et worktrees](02-workspaces-sujets.md) | `feat/sujets-worktrees` | `feat/daemon-socle` | fait |
+| 03 | [Terminaux persistants](03-terminaux-persistants.md) | `feat/terminaux` | `feat/sujets-worktrees` | fait |
+| — | Alignement sur la spec v1 révisée + maquettes git flow | `feat/aligner-spec-v1` | `feat/terminaux` | fait |
+| 04 | [Interface v0.1](04-interface.md) | `feat/interface-socle` | `feat/aligner-spec-v1` | fait |
+| 05 | [CLI, distribution et recette](05-cli-distribution-recette.md) | `feat/cli-recette` | `feat/interface-socle` | fait, recette humaine à finir : [recette-v0.1.md](../recette-v0.1.md) |
 
 ## 4. Correspondance avec les critères d'acceptation du brief
 
