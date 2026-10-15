@@ -13,6 +13,11 @@ import type { Indexer } from '../topics/index.js';
 
 const ulid = monotonicFactory();
 const FIVE_MIN = 5 * 60_000;
+const TWO_MIN = 2 * 60_000;
+const LIVE = ['starting', 'working', 'needs_input', 'idle'];
+
+// Actions d'un sujet connues en v0.1 (l'ouverture dans l'éditeur arrive en 02.5)
+export const TOPIC_ACTIONS = ['topic.cleanup'] as const;
 
 const CreateBody = Type.Object(
   {
@@ -29,9 +34,19 @@ const CreateBody = Type.Object(
 
 export interface TopicRouteDeps {
   db: Db;
+  codegraphBin: string;
   config: AidConfig;
   actions: ActionContext;
   indexer: Indexer;
+}
+
+interface TopicRow {
+  id: string;
+  workspace_id: string;
+  branch: string;
+  base: string;
+  worktree: string;
+  state: string;
 }
 
 interface WorkspaceRow {
@@ -124,5 +139,62 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       },
     });
     return reply.code(202).send({ actionId, slug, branch });
+  });
+
+  app.post('/api/topics/:id/actions/:actionId', async (req, reply) => {
+    const { id, actionId } = req.params as { id: string; actionId: string };
+    if (!(TOPIC_ACTIONS as readonly string[]).includes(actionId)) {
+      throw new AidHttpError(404, `action inconnue : ${actionId}`);
+    }
+    const topic = deps.db.prepare('SELECT * FROM topics WHERE id = ?').get(id) as
+      TopicRow | undefined;
+    if (!topic) throw new AidHttpError(404, 'sujet inconnu');
+    const ws = deps.db
+      .prepare('SELECT * FROM workspaces WHERE id = ?')
+      .get(topic.workspace_id) as WorkspaceRow;
+
+    const body = (req.body ?? {}) as { confirmUnmerged?: number };
+    if (topic.state === 'archived') throw new AidHttpError(409, 'ce sujet est déjà archivé');
+    const alive = deps.db
+      .prepare(
+        `SELECT a.id, a.kind FROM agents a JOIN runs r ON r.id = a.run_id
+         WHERE r.topic_id = ? AND a.status IN (${LIVE.map(() => '?').join(',')})`,
+      )
+      .all(id, ...LIVE) as Array<{ id: string; kind: string }>;
+    if (alive.length > 0) {
+      throw new AidHttpError(409, 'des agents tournent encore : les arrêter avant de nettoyer', {
+        agents: alive,
+      });
+    }
+    const { actionId: runId } = startAction(deps.actions, {
+      workspaceId: ws.id,
+      topicId: id,
+      action: 'topic.cleanup',
+      script: join(scripts, 'topic-cleanup.sh'),
+      cwd: existsSync(topic.worktree) ? topic.worktree : ws.root,
+      timeoutMs: TWO_MIN,
+      env: scriptEnv(process.env, deps.config.env.strip, {
+        AID_REPO_ROOT: ws.root,
+        AID_TOPIC: id,
+        AID_SLUG: topic.worktree.split('/').at(-1) ?? '',
+        AID_BRANCH: topic.branch,
+        AID_BASE: topic.base,
+        AID_WORKTREE: topic.worktree,
+        AID_CODEGRAPH_BIN: deps.codegraphBin,
+        ...(body.confirmUnmerged !== undefined && {
+          AID_CONFIRM_UNMERGED: String(body.confirmUnmerged),
+        }),
+      }),
+      afterSuccess: () => {
+        deps.actions.store.append({
+          source: 'daemon',
+          type: 'topic.state',
+          workspaceId: ws.id,
+          topicId: id,
+          data: { state: 'archived' },
+        });
+      },
+    });
+    return reply.code(202).send({ actionId: runId });
   });
 }

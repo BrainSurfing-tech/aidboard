@@ -69,6 +69,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerTopicRoutes(app, {
     db: deps.db,
     config: deps.config,
+    codegraphBin: deps.codegraphBin ?? 'codegraph',
     actions: { store: deps.store, paths: deps.paths, queue: new WorkspaceQueue() },
     indexer,
   });
