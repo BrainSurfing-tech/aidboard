@@ -74,6 +74,10 @@ export class AidClient {
     void this.connect();
   }
 
+  request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+    return api<T>(method, path, body, this.o.fetchImpl);
+  }
+
   async refresh(): Promise<void> {
     const state = await api<StateSnapshot>('GET', '/api/state', undefined, this.o.fetchImpl);
     this.lastEventId = state.lastEventId ?? this.lastEventId;
