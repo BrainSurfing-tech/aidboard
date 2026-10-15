@@ -3,6 +3,7 @@ import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
 import { afterEach, expect, test } from 'vitest';
+import type { ActionRun } from '../../src/shared/model.js';
 import { Accueil } from '../../web/src/ecrans/Accueil.js';
 import { FakeSocket, json, setup, snapshot, topic, ws } from './helpers.js';
 
@@ -18,7 +19,7 @@ function Page() {
   );
 }
 
-const action = (over: object) => ({
+const action = (over: Partial<ActionRun>): ActionRun => ({
   id: 'ac_1',
   topicId: null,
   workspaceId: 'ws_1',
