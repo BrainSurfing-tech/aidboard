@@ -17,7 +17,7 @@
     "test": "vitest run",
     "build": "tsup && vite build web",
     "e2e": "playwright test",
-    "gate": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "gate": "npm run typecheck && npm run lint && npm run build && npm run test",
     "gate:e2e": "npm run build && npm run e2e",
     "dev:web": "vite web",
     "dev:daemon": "tsup && node --enable-source-maps dist/cli/aid.js daemon --foreground"

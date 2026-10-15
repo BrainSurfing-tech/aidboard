@@ -15,6 +15,7 @@ import { WorkspaceQueue } from './actions/queue.js';
 import { Indexer } from './topics/index.js';
 import { registerTopicRoutes } from './routes/topics.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
+import { registerDaemonRoutes } from './routes/daemon.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
@@ -31,9 +32,14 @@ export interface ServerDeps {
   paths: AidPaths;
   procVersion?: () => string | null;
   codegraphBin?: string;
+  requestStop?: () => void;
   devOrigin?: string;
   webRoot?: string | null;
   logger?: boolean;
+}
+
+export function redactToken(url: string | undefined): string {
+  return (url ?? '').replace(/([?&]token=)[^&]*/g, '$1***');
 }
 
 export function defaultWebRoot(): string | null {
@@ -43,7 +49,14 @@ export function defaultWebRoot(): string | null {
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: deps.logger ?? false,
+    // le token d'ouverture (/?token=…) ne doit pas finir dans daemon.log
+    logger: deps.logger
+      ? {
+          serializers: {
+            req: (r) => ({ method: r.method, url: redactToken(r.url), host: r.headers?.host }),
+          },
+        }
+      : false,
     // refuser un champ inconnu plutôt que de le retirer sans rien dire
     ajv: { customOptions: { removeAdditional: false } },
   });
@@ -63,6 +76,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(500).send({ error: 'erreur interne' });
   });
   registerStateRoutes(app, deps.db);
+  registerDaemonRoutes(app, { db: deps.db, requestStop: deps.requestStop ?? (() => undefined) });
   registerAgentRoutes(app, { db: deps.db, agents: deps.agents });
   registerWorkspaceRoutes(app, deps);
   const indexer = new Indexer({
