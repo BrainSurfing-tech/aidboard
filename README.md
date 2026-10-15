@@ -6,11 +6,11 @@ fermer l'onglet n'arrête rien.
 
 ## Prérequis
 
-| Plateforme | À installer avant |
-| --- | --- |
-| macOS | Node 22 à 24, git |
-| Linux | Node 22 à 24, git, **`sudo apt install build-essential python3`** (node-pty n'a pas de binaire précompilé pour Linux) |
-| Windows | **WSL2 uniquement, jamais en natif.** Dans WSL2 : comme Linux, plus `sudo apt install wslu` pour que le navigateur Windows s'ouvre tout seul. Garder les dépôts dans le système de fichiers Linux (`~/…`), pas sous `/mnt/c` : c'est lent. |
+| Plateforme | À installer avant                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| macOS      | Node 22 à 24, git                                                                                                                                                                                                                          |
+| Linux      | Node 22 à 24, git, **`sudo apt install build-essential python3`** (node-pty n'a pas de binaire précompilé pour Linux)                                                                                                                      |
+| Windows    | **WSL2 uniquement, jamais en natif.** Dans WSL2 : comme Linux, plus `sudo apt install wslu` pour que le navigateur Windows s'ouvre tout seul. Garder les dépôts dans le système de fichiers Linux (`~/…`), pas sous `/mnt/c` : c'est lent. |
 
 Facultatifs : `claude`, `codex` (les agents), `codegraph` (index structurel), `gh` (utile à partir de la v0.3).
 
@@ -23,14 +23,14 @@ aid                   # lance le daemon s'il ne tourne pas, ouvre le navigateur
 
 ou, sans installer : `npx aidboard`.
 
-| Commande | Effet |
-| --- | --- |
-| `aid` | démarre le daemon (détaché, ses agents survivent au terminal) et ouvre le navigateur |
-| `aid open` | rouvre le navigateur sur le daemon qui tourne |
-| `aid status` | pid, port, nombre de sujets et d'agents vivants |
-| `aid stop` | arrête le daemon ; **refusé tant que des agents tournent** (code 2) |
-| `aid stop --force` | arrête le daemon et tous ses agents |
-| `aid doctor` | vérifie la machine et dit quoi corriger |
+| Commande           | Effet                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `aid`              | démarre le daemon (détaché, ses agents survivent au terminal) et ouvre le navigateur |
+| `aid open`         | rouvre le navigateur sur le daemon qui tourne                                        |
+| `aid status`       | pid, port, nombre de sujets et d'agents vivants                                      |
+| `aid stop`         | arrête le daemon ; **refusé tant que des agents tournent** (code 2)                  |
+| `aid stop --force` | arrête le daemon et tous ses agents                                                  |
+| `aid doctor`       | vérifie la machine et dit quoi corriger                                              |
 
 Premier pas : « Nouveau sujet » dans la barre. Sans dépôt enregistré, A-I-D demande d'abord le chemin de la racine d'un
 dépôt git (qui doit avoir un remote `origin`).
