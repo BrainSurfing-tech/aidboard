@@ -16,8 +16,9 @@ export interface TestDaemon {
 // Vrai daemon, AID_HOME temporaire, port éphémère, authentifié en Bearer.
 export async function startTestDaemon(
   home = mkdtempSync(join(tmpdir(), 'aid-d-')),
+  extra: { codegraphBin?: string } = {},
 ): Promise<TestDaemon> {
-  const d = await startDaemon({ home, config: { port: 0 } });
+  const d = await startDaemon({ home, config: { port: 0 }, ...extra });
   const headers = { host: `127.0.0.1:${d.port}`, authorization: `Bearer ${d.auth.adminToken}` };
   return { d, home, headers, db: d.db, store: d.store };
 }
@@ -31,4 +32,21 @@ export function seedTopic(db: Db): void {
   db.prepare(
     "INSERT INTO agents VALUES ('ag_1','run_1','shell','free','pty','starting','/w/s','[\"sh\"]',NULL,NULL,NULL,'t0','t0')",
   ).run();
+}
+
+export function waitFor<T>(
+  check: () => T | undefined | false,
+  timeoutMs = 15_000,
+  what = 'condition',
+): Promise<T> {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      const v = check();
+      if (v) return resolve(v);
+      if (Date.now() - start > timeoutMs) return reject(new Error(`délai dépassé : ${what}`));
+      setTimeout(tick, 25);
+    };
+    tick();
+  });
 }

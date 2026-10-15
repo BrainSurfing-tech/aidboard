@@ -10,6 +10,9 @@ import type { Db } from './db.js';
 import type { EventStore } from './events/store.js';
 import { AidHttpError } from './errors.js';
 import type { AidPaths } from './paths.js';
+import { WorkspaceQueue } from './actions/queue.js';
+import { Indexer } from './topics/index.js';
+import { registerTopicRoutes } from './routes/topics.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
@@ -23,6 +26,7 @@ export interface ServerDeps {
   store: EventStore;
   paths: AidPaths;
   procVersion?: () => string | null;
+  codegraphBin?: string;
   devOrigin?: string;
   webRoot?: string | null;
   logger?: boolean;
@@ -56,6 +60,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   registerStateRoutes(app, deps.db);
   registerWorkspaceRoutes(app, deps);
+  const indexer = new Indexer({
+    store: deps.store,
+    paths: deps.paths,
+    codegraphBin: deps.codegraphBin ?? 'codegraph',
+  });
+  app.addHook('onClose', async () => indexer.stop());
+  registerTopicRoutes(app, {
+    db: deps.db,
+    config: deps.config,
+    actions: { store: deps.store, paths: deps.paths, queue: new WorkspaceQueue() },
+    indexer,
+  });
   registerEventRoutes(app, deps.db, deps.store);
   registerEventSocket(app, deps.store);
   const webRoot = deps.webRoot === undefined ? defaultWebRoot() : deps.webRoot;
