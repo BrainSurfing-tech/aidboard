@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { AidConfig } from './config.js';
 import type { Db } from './db.js';
 import type { EventStore } from './events/store.js';
+import type { AgentManager } from './pty/manager.js';
 import { AidHttpError } from './errors.js';
 import type { AidPaths } from './paths.js';
 import { WorkspaceQueue } from './actions/queue.js';
@@ -24,6 +25,7 @@ export interface ServerDeps {
   auth: AuthState;
   db: Db;
   store: EventStore;
+  agents: AgentManager;
   paths: AidPaths;
   procVersion?: () => string | null;
   codegraphBin?: string;
