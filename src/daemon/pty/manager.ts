@@ -10,6 +10,7 @@ import type { EventStore } from '../events/store.js';
 import type { AidPaths } from '../paths.js';
 import { type AuthState, issueRunToken } from '../security.js';
 import { LogWriter } from './log.js';
+import { TerminalMirror } from './mirror.js';
 import { getPty } from './native.js';
 import { agentCommand, agentEnv, resolveOnPath, type SpawnKind } from './spawn.js';
 
@@ -24,6 +25,7 @@ export interface LiveAgent {
   runId: string;
   workspaceId: string;
   pty: IPty;
+  mirror: TerminalMirror;
   size: { cols: number; rows: number };
   exited: boolean;
   exit: { exitCode: number | null; signal: number | null; reason: string } | null;
@@ -104,6 +106,7 @@ export class AgentManager {
       runId: run.id,
       workspaceId: topic.workspace_id,
       pty,
+      mirror: new TerminalMirror(INITIAL.cols, INITIAL.rows, config.terminal.scrollback),
       size: { ...INITIAL },
       exited: false,
       exit: null,
@@ -116,6 +119,7 @@ export class AgentManager {
     const log = new LogWriter(join(paths.logs, `${agentId}.log`), config.terminal.logMaxBytes);
     pty.onData((chunk) => {
       log.write(chunk);
+      live.mirror.write(chunk);
       for (const cb of subscribers) cb(chunk);
     });
     pty.onExit(({ exitCode, signal }) => {
@@ -213,6 +217,20 @@ export class AgentManager {
   /** Libère les ressources d'un agent terminé (sujet archivé). */
   forget(agentId: string): void {
     const a = this.live.get(agentId);
-    if (a?.exited) this.live.delete(agentId);
+    if (a?.exited) {
+      a.mirror.dispose();
+      this.live.delete(agentId);
+    }
+  }
+
+  /** Taille imposée par le client qui a la main ; une taille absurde est ignorée. */
+  resize(agentId: string, cols: number, rows: number): boolean {
+    const a = this.live.get(agentId);
+    if (!a || a.exited || !Number.isInteger(cols) || !Number.isInteger(rows)) return false;
+    if (cols < 2 || rows < 2 || cols > 1000 || rows > 1000) return false;
+    a.pty.resize(cols, rows);
+    a.mirror.resize(cols, rows);
+    a.size = { cols, rows };
+    return true;
   }
 }
