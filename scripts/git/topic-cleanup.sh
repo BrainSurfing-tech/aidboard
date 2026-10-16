@@ -6,10 +6,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 require_env AID_REPO_ROOT AID_BRANCH AID_BASE AID_WORKTREE
 CODEGRAPH="${AID_CODEGRAPH_BIN:-codegraph}"
+# D21 : stash_ref non vide seulement si AID_DIRTY_ACTION=stash a réellement stashé.
+stash_ref=""
 
 # 1. Rien de non commité. L'index .codegraph est une donnée dérivée : il ne compte pas.
 if [ -d "$AID_WORKTREE" ]; then
   dirty="$(git -C "$AID_WORKTREE" status --porcelain -- . ':(exclude).codegraph')"
+  if [ -n "$dirty" ] && [ "${AID_DIRTY_ACTION:-}" = "stash" ]; then
+    git -C "$AID_WORKTREE" stash push -u -m "aid/${AID_SLUG:-$AID_BRANCH}"
+    stash_ref="$(git -C "$AID_WORKTREE" stash list --format='%H %gs' | head -1 | cut -d' ' -f1)"
+    dirty=""
+  fi
+  if [ -n "$dirty" ] && [ "${AID_DIRTY_ACTION:-}" = "force" ]; then
+    dirty=""
+  fi
   if [ -n "$dirty" ]; then
     echo "$dirty" >&2
     die_human "modifications non commitées : rien n'est supprimé"
@@ -48,8 +58,16 @@ if [ -d "$AID_WORKTREE/.codegraph" ]; then
   rm -rf "$AID_WORKTREE/.codegraph"
 fi
 
+if [ "${AID_DIRTY_ACTION:-}" = "force" ]; then
+  [ -d "$AID_WORKTREE" ] && git worktree remove --force "$AID_WORKTREE"
+else
 [ -d "$AID_WORKTREE" ] && git worktree remove "$AID_WORKTREE"
+fi
 # -D est sûr ici : les commits non fusionnés ont été confirmés plus haut
 [ "$have_branch" = 1 ] && git branch -D "$AID_BRANCH" >/dev/null
 
+if [ -n "$stash_ref" ]; then
+  printf '::aid:: {"removed": true, "stashRef": "%s"}\n' "$stash_ref"
+else
 printf '::aid:: {"removed": true}\n'
+fi

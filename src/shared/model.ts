@@ -78,6 +78,7 @@ export interface Topic {
   worktreeMissing: boolean;
   prNumber: number | null;
   prUrl: string | null;
+  stashRef: string | null;
   createdAt: string;
   updatedAt: string;
 }

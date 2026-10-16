@@ -52,6 +52,7 @@ export const topic = (over: Partial<Topic> = {}): Topic => ({
   worktreeMissing: false,
   prNumber: null,
   prUrl: null,
+  stashRef: null,
   createdAt: '2026-10-15T10:00:00.000Z',
   updatedAt: new Date().toISOString(),
   ...over,

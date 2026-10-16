@@ -39,6 +39,7 @@ export function buildSnapshot(db: Db, all = false): StateSnapshot {
     worktreeMissing: !existsSync(r.worktree as string),
     prNumber: r.pr_number as number | null,
     prUrl: r.pr_url as string | null,
+    stashRef: r.stash_ref as string | null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   }));

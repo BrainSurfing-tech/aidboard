@@ -355,7 +355,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
                 AID_WORKTREE: topic.worktree,
                 AID_CODEGRAPH_BIN: deps.codegraphBin,
               }),
-              afterSuccess: () => {
+              afterSuccess: (out) => {
                 deps.actions.store.append({
                   source: 'daemon',
                   type: 'topic.state',
@@ -363,6 +363,15 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
                   topicId: id,
                   data: { state: 'archived' },
                 });
+                if (typeof out.result.stashRef === 'string') {
+                  deps.actions.store.append({
+                    source: 'daemon',
+                    type: 'topic.stash',
+                    workspaceId: ws.id,
+                    topicId: id,
+                    data: { stashRef: out.result.stashRef },
+                  });
+                }
               },
             });
           }
@@ -371,7 +380,11 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       return reply.code(202).send({ actionId: runId });
     }
 
-    const body = (req.body ?? {}) as { confirmUnmerged?: number };
+    const body = (req.body ?? {}) as {
+      confirmUnmerged?: number;
+      dirtyAction?: 'stash' | 'force';
+      confirmed?: boolean;
+    };
     if (topic.state === 'archived') throw new AidHttpError(409, 'ce sujet est déjà archivé');
     const alive = deps.db
       .prepare(
@@ -383,6 +396,10 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       throw new AidHttpError(409, 'des agents tournent encore : les arrêter avant de nettoyer', {
         agents: alive,
       });
+    }
+    // D21 : la case à cocher de confirmation est un garde-fou côté daemon, pas seulement côté UI.
+    if (body.dirtyAction === 'force' && body.confirmed !== true) {
+      throw new AidHttpError(422, 'suppression forcée : confirmation requise');
     }
     const { actionId: runId } = startAction(deps.actions, {
       workspaceId: ws.id,
@@ -403,8 +420,9 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         ...(body.confirmUnmerged !== undefined && {
           AID_CONFIRM_UNMERGED: String(body.confirmUnmerged),
         }),
+        ...(body.dirtyAction && { AID_DIRTY_ACTION: body.dirtyAction }),
       }),
-      afterSuccess: () => {
+      afterSuccess: (out) => {
         deps.actions.store.append({
           source: 'daemon',
           type: 'topic.state',
@@ -412,6 +430,15 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
           topicId: id,
           data: { state: 'archived' },
         });
+        if (typeof out.result.stashRef === 'string') {
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.stash',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { stashRef: out.result.stashRef },
+          });
+        }
       },
     });
     return reply.code(202).send({ actionId: runId });
