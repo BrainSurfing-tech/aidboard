@@ -10,6 +10,7 @@ import { findAssetDir } from '../assets.js';
 import type { AidConfig } from '../config.js';
 import type { Db } from '../db.js';
 import { AidHttpError } from '../errors.js';
+import { git } from '../git/exec.js';
 import type { Indexer } from '../topics/index.js';
 
 const ulid = monotonicFactory();
@@ -17,8 +18,20 @@ const FIVE_MIN = 5 * 60_000;
 const TWO_MIN = 2 * 60_000;
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
 
-// Actions d'un sujet connues en v0.1
-export const TOPIC_ACTIONS = ['topic.cleanup', 'editor.open'] as const;
+// Actions d'un sujet connues en v0.1 et au chantier 06
+export const TOPIC_ACTIONS = [
+  'topic.cleanup',
+  'editor.open',
+  'topic.setup-ignorer',
+  'topic.sync',
+  'topic.sync-continuer',
+  'topic.sync-annuler',
+  'topic.test',
+  'topic.pr',
+  'pr.rafraichir',
+  'topic.merge',
+  'archive.oublier-stash',
+] as const;
 
 const CreateBody = Type.Object(
   {
@@ -48,6 +61,8 @@ interface TopicRow {
   base: string;
   worktree: string;
   state: string;
+  pr_number: number | null;
+  stash_ref: string | null;
 }
 
 interface WorkspaceRow {
@@ -86,9 +101,47 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
     const topicId = `tp_${ulid()}`;
     const branch = `${body.type}/${slug}`;
     const worktree = join(ws.worktrees_dir, slug);
+    // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
+    const indexed = existsSync(join(ws.root, '.codegraph'));
+    const now = new Date().toISOString();
+
+    // D15 : le sujet existe en `draft` dès la requête, avant que le script ne tourne.
+    deps.actions.store.append(
+      {
+        source: 'daemon',
+        type: 'topic.state',
+        workspaceId: ws.id,
+        topicId,
+        data: { state: 'draft', indexState: indexed ? 'indexing' : 'disabled' },
+      },
+      (tx) => {
+        tx.prepare(
+          'INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL)',
+        ).run(
+          topicId,
+          ws.id,
+          slug,
+          body.title,
+          body.type,
+          branch,
+          ws.base_branch,
+          worktree,
+          'draft',
+          indexed ? 'indexing' : 'disabled',
+          now,
+          now,
+        );
+        tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
+          `run_${ulid()}`,
+          topicId,
+          now,
+        );
+      },
+    );
 
     const { actionId } = startAction(deps.actions, {
       workspaceId: ws.id,
+      topicId,
       action: 'topic.create',
       script: join(scripts, 'topic-create.sh'),
       cwd: ws.root,
@@ -104,44 +157,65 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         AID_WORKTREE: worktree,
       }),
       afterSuccess: () => {
-        // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
-        const indexed = existsSync(join(ws.root, '.codegraph'));
-        const now = new Date().toISOString();
-        deps.actions.store.append(
-          {
-            source: 'daemon',
-            type: 'topic.state',
-            workspaceId: ws.id,
-            topicId,
-            data: { state: 'active', indexState: indexed ? 'indexing' : 'disabled' },
-          },
-          (tx) => {
-            tx.prepare('INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)').run(
-              topicId,
-              ws.id,
-              slug,
-              body.title,
-              body.type,
-              branch,
-              ws.base_branch,
-              worktree,
-              'active',
-              indexed ? 'indexing' : 'disabled',
-              now,
-              now,
-            );
-            tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
-              `run_${ulid()}`,
-              topicId,
-              now,
-            );
-          },
-        );
+        deps.actions.store.append({
+          source: 'daemon',
+          type: 'topic.state',
+          workspaceId: ws.id,
+          topicId,
+          data: { state: 'active' },
+        });
         if (indexed) deps.indexer.start({ id: topicId, workspaceId: ws.id, worktree });
         return { topicId };
       },
+      // Le brouillon n'a rien créé sur disque : un échec du script le fait disparaître,
+      // le slug redevient immédiatement utilisable (même suppression que topic.setup-ignorer).
+      afterFailure: () => {
+        deps.db.transaction(() => {
+          deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(topicId);
+          deps.db.prepare('DELETE FROM topics WHERE id = ?').run(topicId);
+        })();
+      },
     });
-    return reply.code(202).send({ actionId, slug, branch });
+    return reply.code(202).send({ actionId, slug, branch, topicId });
+  });
+
+  // Chronologie de l'écran archive (06.10) : aucun journal par sujet n'existait encore.
+  // Le sujet est renvoyé en plus des événements : /api/state exclut les archivés par défaut,
+  // donc l'écran archive n'a autrement aucun moyen de lire son titre/branche/stash_ref.
+  app.get('/api/topics/:id/events', async (req) => {
+    const { id } = req.params as { id: string };
+    const row = deps.db.prepare('SELECT * FROM topics WHERE id = ?').get(id) as
+      | {
+          id: string;
+          workspace_id: string;
+          slug: string;
+          title: string;
+          branch: string;
+          base: string;
+          worktree: string;
+          state: string;
+          stash_ref: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) throw new AidHttpError(404, 'sujet inconnu');
+    return {
+      topic: {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        slug: row.slug,
+        title: row.title,
+        branch: row.branch,
+        base: row.base,
+        worktree: row.worktree,
+        state: row.state,
+        stashRef: row.stash_ref,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+      events: deps.actions.store.since(null, { topicId: id }),
+    };
   });
 
   app.post('/api/topics/:id/actions/:actionId', async (req, reply) => {
@@ -170,7 +244,213 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       return reply.code(204).send();
     }
 
-    const body = (req.body ?? {}) as { confirmUnmerged?: number };
+    if (actionId === 'topic.setup-ignorer') {
+      if (topic.state !== 'draft') {
+        throw new AidHttpError(409, 'ce sujet n’est plus en préparation');
+      }
+      deps.db.transaction(() => {
+        deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(id);
+        deps.db.prepare('DELETE FROM topics WHERE id = ?').run(id);
+      })();
+      return reply.code(204).send();
+    }
+
+    if (
+      actionId === 'topic.sync' ||
+      actionId === 'topic.sync-continuer' ||
+      actionId === 'topic.sync-annuler'
+    ) {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const extra: Record<string, string> = {};
+      if (actionId === 'topic.sync-continuer') extra.AID_SYNC_CONTINUE = '1';
+      if (actionId === 'topic.sync-annuler') extra.AID_SYNC_ABORT = '1';
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: actionId,
+        script: join(scripts, 'topic-sync.sh'),
+        cwd: topic.worktree,
+        timeoutMs: FIVE_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_REPO_ROOT: ws.root,
+          AID_BRANCH: topic.branch,
+          AID_BASE: topic.base,
+          AID_WORKTREE: topic.worktree,
+          ...extra,
+        }),
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'topic.test') {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.test',
+        script: join(scripts, 'topic-test.sh'),
+        cwd: topic.worktree,
+        timeoutMs: FIVE_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {}),
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'topic.pr') {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const prBody = (req.body ?? {}) as { title?: string; body?: string };
+      if (!prBody.title) throw new AidHttpError(422, 'titre de PR requis');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.pr',
+        script: join(scripts, 'topic-pr.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_BRANCH: topic.branch,
+          AID_BASE: topic.base,
+          AID_PR_TITLE: prBody.title,
+          AID_PR_BODY: prBody.body ?? '',
+        }),
+        afterSuccess: (out) => {
+          const prNumber = typeof out.result.number === 'number' ? out.result.number : null;
+          const prUrl = typeof out.result.url === 'string' ? out.result.url : null;
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.pr',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { prNumber, prUrl },
+          });
+        },
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'pr.rafraichir') {
+      if (topic.pr_number == null) throw new AidHttpError(409, 'aucune PR ouverte pour ce sujet');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'pr.rafraichir',
+        script: join(scripts, 'topic-pr-refresh.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_PR_NUMBER: String(topic.pr_number),
+        }),
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'topic.merge') {
+      if (topic.pr_number == null) throw new AidHttpError(409, 'aucune PR ouverte pour ce sujet');
+      // gh peut réussir côté GitHub avant que le script ne confirme (coupure réseau après
+      // l'appel) : un second topic.merge sur un sujet déjà fusionné n'est pas une erreur
+      // bloquante, juste un 409 propre plutôt qu'une tentative de refusion.
+      if (topic.state === 'merged') {
+        throw new AidHttpError(409, 'ce sujet est déjà fusionné');
+      }
+      const mergeBody = (req.body ?? {}) as {
+        strategy?: 'squash' | 'merge' | 'rebase';
+        message?: string;
+        deleteBranch?: boolean;
+        cleanupAfter?: boolean;
+      };
+      if (!mergeBody.strategy) throw new AidHttpError(422, 'stratégie de fusion requise');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.merge',
+        script: join(scripts, 'topic-merge.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_PR_NUMBER: String(topic.pr_number),
+          AID_MERGE_STRATEGY: mergeBody.strategy,
+          ...(mergeBody.message && { AID_MERGE_MESSAGE: mergeBody.message }),
+          ...(mergeBody.deleteBranch && { AID_MERGE_DELETE_BRANCH: '1' }),
+        }),
+        afterSuccess: () => {
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.state',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { state: 'merged' },
+          });
+          if (mergeBody.cleanupAfter) {
+            startAction(deps.actions, {
+              workspaceId: ws.id,
+              topicId: id,
+              action: 'topic.cleanup',
+              script: join(scripts, 'topic-cleanup.sh'),
+              cwd: existsSync(topic.worktree) ? topic.worktree : ws.root,
+              timeoutMs: TWO_MIN,
+              env: scriptEnv(process.env, deps.config.env.strip, {
+                AID_REPO_ROOT: ws.root,
+                AID_TOPIC: id,
+                AID_SLUG: topic.worktree.split('/').at(-1) ?? '',
+                AID_BRANCH: topic.branch,
+                AID_BASE: topic.base,
+                AID_WORKTREE: topic.worktree,
+                AID_CODEGRAPH_BIN: deps.codegraphBin,
+              }),
+              afterSuccess: (out) => {
+                deps.actions.store.append({
+                  source: 'daemon',
+                  type: 'topic.state',
+                  workspaceId: ws.id,
+                  topicId: id,
+                  data: { state: 'archived' },
+                });
+                if (typeof out.result.stashRef === 'string') {
+                  deps.actions.store.append({
+                    source: 'daemon',
+                    type: 'topic.stash',
+                    workspaceId: ws.id,
+                    topicId: id,
+                    data: { stashRef: out.result.stashRef },
+                  });
+                }
+              },
+            });
+          }
+        },
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'archive.oublier-stash') {
+      if (topic.stash_ref == null)
+        throw new AidHttpError(409, 'aucun stash à oublier pour ce sujet');
+      const ref = topic.stash_ref;
+      // La pile de stash est partagée entre les worktrees liés : on résout l'index courant
+      // par la SHA captée au nettoyage plutôt que de garder un stash@{n} qui se périme.
+      const found = await deps.actions.queue.run(ws.id, async () => {
+        const list = await git(ws.root, ['stash', 'list', '--format=%H %gd']);
+        const line = list.stdout.split('\n').find((l) => l.startsWith(`${ref} `));
+        const stashId = line?.split(' ')[1];
+        if (!stashId) return false;
+        await git(ws.root, ['stash', 'drop', stashId]);
+        return true;
+      });
+      deps.actions.store.append({
+        source: 'daemon',
+        type: 'topic.stash',
+        workspaceId: ws.id,
+        topicId: id,
+        data: { stashRef: null },
+      });
+      return reply.code(200).send({ found });
+    }
+
+    const body = (req.body ?? {}) as {
+      confirmUnmerged?: number;
+      dirtyAction?: 'stash' | 'force';
+      confirmed?: boolean;
+    };
     if (topic.state === 'archived') throw new AidHttpError(409, 'ce sujet est déjà archivé');
     const alive = deps.db
       .prepare(
@@ -182,6 +462,10 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       throw new AidHttpError(409, 'des agents tournent encore : les arrêter avant de nettoyer', {
         agents: alive,
       });
+    }
+    // D21 : la case à cocher de confirmation est un garde-fou côté daemon, pas seulement côté UI.
+    if (body.dirtyAction === 'force' && body.confirmed !== true) {
+      throw new AidHttpError(422, 'suppression forcée : confirmation requise');
     }
     const { actionId: runId } = startAction(deps.actions, {
       workspaceId: ws.id,
@@ -202,8 +486,9 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         ...(body.confirmUnmerged !== undefined && {
           AID_CONFIRM_UNMERGED: String(body.confirmUnmerged),
         }),
+        ...(body.dirtyAction && { AID_DIRTY_ACTION: body.dirtyAction }),
       }),
-      afterSuccess: () => {
+      afterSuccess: (out) => {
         deps.actions.store.append({
           source: 'daemon',
           type: 'topic.state',
@@ -211,6 +496,15 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
           topicId: id,
           data: { state: 'archived' },
         });
+        if (typeof out.result.stashRef === 'string') {
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.stash',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { stashRef: out.result.stashRef },
+          });
+        }
       },
     });
     return reply.code(202).send({ actionId: runId });

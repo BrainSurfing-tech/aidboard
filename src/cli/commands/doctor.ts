@@ -100,6 +100,17 @@ export async function runChecks(p: Probes): Promise<Check[]> {
     verify(p.has(bin), bin, { level: 'warn', label: `${bin} introuvable`, detail: effet });
   }
 
+  // La seule présence du binaire ne dit rien de la session : topic.pr/topic.merge
+  // appellent `gh` en tant qu'utilisateur courant, pas en tant que simple exécutable.
+  if (p.has('gh')) {
+    const authed = await p.version('gh', ['auth', 'status']);
+    verify(authed !== null, 'gh : authentifié', {
+      level: 'warn',
+      label: 'gh non authentifié',
+      detail: 'gh auth login requis pour ouvrir ou fusionner des PR (v0.3)',
+    });
+  }
+
   const mode = p.homeMode();
   if (mode !== null) {
     const perms = mode & 0o777;

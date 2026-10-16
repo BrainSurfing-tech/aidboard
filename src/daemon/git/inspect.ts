@@ -63,3 +63,35 @@ export function readProjectNamespace(root: string): string | undefined {
 export async function remoteBranchExists(root: string, branch: string): Promise<boolean> {
   return (await git(root, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`])).ok;
 }
+
+// null en détached HEAD : pas une branche, rien à rapprocher de topic.branch.
+export async function currentBranch(root: string): Promise<string | null> {
+  const r = await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return r.ok ? r.stdout : null;
+}
+
+export interface GitLiveInfo {
+  aheadBehind: { ahead: number; behind: number } | null;
+  rebaseInProgress: boolean;
+}
+
+// D16 : avance/retard et rebase en cours ne sont jamais stockés — relus en direct à chaque
+// GET /api/state, comme currentBranch l'est déjà pour topic.branch.
+export async function gitLiveInfo(worktree: string, base: string): Promise<GitLiveInfo> {
+  const gitDir = await git(worktree, ['rev-parse', '--path-format=absolute', '--git-dir']);
+  const rebaseInProgress =
+    gitDir.ok &&
+    (existsSync(join(gitDir.stdout, 'rebase-merge')) ||
+      existsSync(join(gitDir.stdout, 'rebase-apply')));
+
+  // HEAD plutôt que la branche : en rebase, HEAD est détaché, la branche ne résout plus rien.
+  const counts = await git(worktree, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    `origin/${base}...HEAD`,
+  ]);
+  if (!counts.ok) return { aheadBehind: null, rebaseInProgress };
+  const [behind, ahead] = counts.stdout.split(/\s+/).map(Number);
+  return { aheadBehind: { ahead: ahead ?? 0, behind: behind ?? 0 }, rebaseInProgress };
+}

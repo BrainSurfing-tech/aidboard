@@ -101,7 +101,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     app.log.error(err);
     return reply.code(500).send({ error: 'erreur interne' });
   });
-  registerStateRoutes(app, deps.db);
+  registerStateRoutes(app, deps.db, deps.store);
   registerDaemonRoutes(app, {
     db: deps.db,
     requestStop: deps.requestStop ?? (() => undefined),

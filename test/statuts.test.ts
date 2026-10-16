@@ -14,7 +14,7 @@ function setup() {
     "INSERT INTO workspaces (id, name, root, base_branch, worktrees_dir, created_at) VALUES ('ws_1','a','/a','main','/w','t0')",
   ).run();
   db.prepare(
-    "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s','active',NULL,'disabled','t0','t0')",
+    "INSERT INTO topics (id, workspace_id, slug, title, type, branch, base, worktree, state, phase, index_state, created_at, updated_at) VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s','active',NULL,'disabled','t0','t0')",
   ).run();
   db.prepare("INSERT INTO runs VALUES ('run_1','tp_1','standard','open','t0')").run();
   db.prepare(

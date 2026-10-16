@@ -24,6 +24,9 @@ export interface ActionSpec {
   data?: Record<string, unknown>;
   // Appelé après un succès du script ; peut écrire des événements et rendre le topicId à joindre.
   afterSuccess?: (out: ScriptOutcome) => { topicId?: string } | void;
+  // Appelé après un échec (needs_human ou failed), avant l'event action.finished — mutation
+  // synchrone uniquement, pour rester garantie visible dès que action.finished l'est.
+  afterFailure?: (out: ScriptOutcome) => void;
 }
 
 // Retire les variables à ne pas transmettre, ajoute les AID_* et verrouille git en non interactif.
@@ -83,6 +86,8 @@ export function startAction(
           tail: [...out.tail, `après-script : ${(err as Error).message}`],
         };
       }
+    } else if (out.outcome !== 'succeeded' && spec.afterFailure) {
+      spec.afterFailure(out);
     }
     ctx.store.append({
       workspaceId: spec.workspaceId,

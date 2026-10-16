@@ -202,3 +202,43 @@ test('dépôt sans origin : sujet créé depuis la branche locale, nettoyage com
   expect(existsSync(wt)).toBe(false);
   expect(hasBranch(branch)).toBe(false);
 });
+
+const stashRefOf = (id: string) =>
+  (
+    c.t.db.prepare('SELECT stash_ref FROM topics WHERE id = ?').get(id) as {
+      stash_ref: string | null;
+    }
+  ).stash_ref;
+
+test("D21 : dirtyAction « stash » range le non-commité, le sujet s'archive avec stash_ref", async () => {
+  c = await setupWorkspace();
+  const { wt, branch, topicId } = await makeTopic(c);
+  writeFileSync(join(wt, 'brouillon.txt'), 'à garder par stash\n');
+  const fin = await cleanup(topicId, { dirtyAction: 'stash' });
+  expect(fin.data.outcome).toBe('succeeded');
+  expect(existsSync(wt)).toBe(false);
+  expect(hasBranch(branch)).toBe(false);
+  expect(topicState(topicId)).toBe('archived');
+  expect(stashRefOf(topicId)).toMatch(/^[0-9a-f]{40}$/);
+});
+
+test('D21 : dirtyAction « force » sans confirmed est refusé (422)', async () => {
+  c = await setupWorkspace();
+  const { wt, topicId } = await makeTopic(c);
+  writeFileSync(join(wt, 'brouillon.txt'), 'non commité\n');
+  const r = await postAction(c, topicId, 'topic.cleanup', { dirtyAction: 'force' });
+  expect(r.statusCode).toBe(422);
+  expect(existsSync(wt)).toBe(true);
+});
+
+test('D21 : dirtyAction « force » avec confirmed supprime malgré le non-commité', async () => {
+  c = await setupWorkspace();
+  const { wt, branch, topicId } = await makeTopic(c);
+  writeFileSync(join(wt, 'brouillon.txt'), 'à perdre\n');
+  const fin = await cleanup(topicId, { dirtyAction: 'force', confirmed: true });
+  expect(fin.data.outcome).toBe('succeeded');
+  expect(existsSync(wt)).toBe(false);
+  expect(hasBranch(branch)).toBe(false);
+  expect(topicState(topicId)).toBe('archived');
+  expect(stashRefOf(topicId)).toBeNull();
+});

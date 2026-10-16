@@ -50,6 +50,9 @@ export const topic = (over: Partial<Topic> = {}): Topic => ({
   phase: null,
   indexState: 'disabled',
   worktreeMissing: false,
+  prNumber: null,
+  prUrl: null,
+  stashRef: null,
   createdAt: '2026-10-15T10:00:00.000Z',
   updatedAt: new Date().toISOString(),
   ...over,
@@ -110,9 +113,21 @@ export interface Harness {
   client: AidClient;
 }
 
-export function setup(ui: ReactElement, state: StateSnapshot | 'down', route = '/'): Harness {
+export function setup(
+  ui: ReactElement,
+  state: StateSnapshot | 'down',
+  route = '/',
+  // Pré-enregistrées avant le montage : un effet qui part dès le premier rendu
+  // (avant que le test n'ait la main pour appeler h.respond.set) ne les rate pas.
+  routes: Record<string, (body: unknown) => Response> = {},
+): Harness {
   FakeSocket.all = [];
-  const h: Harness = { calls: [], respond: new Map(), state, client: undefined as never };
+  const h: Harness = {
+    calls: [],
+    respond: new Map(Object.entries(routes)),
+    state,
+    client: undefined as never,
+  };
   const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -143,5 +158,6 @@ export function setup(ui: ReactElement, state: StateSnapshot | 'down', route = '
   return h;
 }
 
+// 204 n'autorise aucun corps (le constructeur Response le refuse même vide) : on l'omet.
 export const json = (status: number, body: object) => () =>
-  new Response(JSON.stringify(body), { status });
+  new Response(status === 204 ? null : JSON.stringify(body), { status });

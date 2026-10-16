@@ -105,7 +105,7 @@ describe.skipIf(!built)('aid en sous-processus', () => {
         Record<string, unknown> & {
           id?: string;
           pid?: number;
-          topics?: Array<{ id: string }>;
+          topics?: Array<{ id: string; state?: string }>;
           actionId?: string;
         }
       >;
@@ -120,13 +120,18 @@ describe.skipIf(!built)('aid en sous-processus', () => {
       type: 'feat',
     });
     let topicId = '';
+    // Le sujet part en « draft » : son worktree n'est prêt (et donc un agent spawnable) qu'une
+    // fois topic.create terminé et le sujet passé en « active ».
     await waitFor(
       () => {
-        void call('GET', '/api/state').then((s) => (topicId = s.topics?.[0]?.id ?? ''));
+        void call('GET', '/api/state').then((s) => {
+          const t = s.topics?.[0];
+          topicId = t?.state === 'active' ? (t.id ?? '') : '';
+        });
         return topicId || undefined;
       },
       20_000,
-      'sujet créé',
+      'sujet actif',
     );
     expect(created.actionId).toBeTruthy();
     const agent = await call('POST', '/api/agents', { topicId, kind: 'shell' });

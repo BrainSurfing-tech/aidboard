@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useLocation } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
+import type { ActionRun } from '../../src/shared/model.js';
 import { Sujet } from '../../web/src/ecrans/Sujet.js';
-import { agent, json, setup, snapshot, topic, ws } from './helpers.js';
+import { agent, FakeSocket, json, setup, snapshot, topic, ws } from './helpers.js';
+
+const action = (over: Partial<ActionRun>): ActionRun => ({
+  id: 'ac_1',
+  topicId: 'tp_1',
+  workspaceId: 'ws_1',
+  action: 'topic.create',
+  state: 'running',
+  exitCode: null,
+  result: null,
+  startedAt: 't',
+  finishedAt: null,
+  ...over,
+});
 
 vi.mock('../../web/src/terminal/Terminal.js', () => ({
   Terminal: ({ agentId, visible }: { agentId: string; visible: boolean }) => (
@@ -27,8 +41,26 @@ const page = (
     <Route path="/sujets/:topicId" element={<Sujet />} />
   </Routes>
 );
-const open = (state: ReturnType<typeof snapshot> | 'down', id = 'tp_1') =>
-  setup(page, state, `/sujets/${id}`);
+const open = (
+  state: ReturnType<typeof snapshot> | 'down',
+  id = 'tp_1',
+  routes: Record<string, (body: unknown) => Response> = {},
+) => setup(page, state, `/sujets/${id}`, routes);
+
+function PageAvecChemin() {
+  const loc = useLocation();
+  return (
+    <>
+      <p data-testid="chemin">{loc.pathname}</p>
+      <Routes>
+        <Route path="/sujets/:topicId" element={<Sujet />} />
+        <Route path="/" element={<p>Accueil</p>} />
+      </Routes>
+    </>
+  );
+}
+const openAvecChemin = (state: ReturnType<typeof snapshot> | 'down', id = 'tp_1') =>
+  setup(<PageAvecChemin />, state, `/sujets/${id}`);
 
 test('en-tête : fil d’Ariane, titre, état, branche, base, worktree', async () => {
   open(snapshot({ workspaces: [ws()], topics: [topic()], runs: [run] }));
@@ -109,7 +141,7 @@ test('un binaire absent : le message du daemon est affiché', async () => {
   );
 });
 
-test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » seulement sur un agent vivant', async () => {
+test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » sur un agent vivant, « Fermer » sur un agent terminé', async () => {
   const h = open(
     snapshot({
       workspaces: [ws()],
@@ -122,20 +154,25 @@ test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » s
     }),
   );
   h.respond.set('DELETE /api/agents/ag_1', json(202, { id: 'ag_1' }));
+  h.respond.set('DELETE /api/agents/ag_2', json(200, { id: 'ag_2' }));
   await screen.findByTestId('term-ag_1');
   expect(screen.getByTestId('term-ag_2').getAttribute('data-visible')).toBe('true');
   expect(screen.getByTestId('term-ag_1').getAttribute('data-visible')).toBe('false');
   expect(text('1-3.terminaux.onglet-1.type')).toBe('claude');
   // « free » n'est pas du français : l'agent lancé à la main est « libre »
   expect(text('1-3.terminaux.onglet-1.role')).toBe('libre');
-  expect(node('1-3.terminaux.onglet-1.arreter')).not.toBeNull();
-  expect(node('1-3.terminaux.onglet-2.arreter')).toBeNull();
+  expect(node('1-3.terminaux.onglet-1.arreter')?.textContent).toBe('Arrêter');
+  expect(node('1-3.terminaux.onglet-2.arreter')?.textContent).toBe('Fermer');
   await userEvent.click(node('1-3.terminaux.onglet-1')!);
   expect(screen.getByTestId('term-ag_1').getAttribute('data-visible')).toBe('true');
   expect(screen.getByTestId('term-ag_2').getAttribute('data-visible')).toBe('false');
   await userEvent.click(node('1-3.terminaux.onglet-1.arreter')!);
   await waitFor(() =>
     expect(h.calls.some((c) => c.method === 'DELETE' && c.url === '/api/agents/ag_1')).toBe(true),
+  );
+  await userEvent.click(node('1-3.terminaux.onglet-2.arreter')!);
+  await waitFor(() =>
+    expect(h.calls.some((c) => c.method === 'DELETE' && c.url === '/api/agents/ag_2')).toBe(true),
   );
 });
 
@@ -195,6 +232,123 @@ test('worktree introuvable : bandeau, aucun terminal, éditeur désactivé', asy
 test('sujet inconnu ou archivé', async () => {
   open(snapshot({ workspaces: [ws()], topics: [topic()] }), 'tp_nope');
   expect(await screen.findByText('Sujet introuvable ou archivé.')).toBeTruthy();
+});
+
+test('brouillon (écran 2.2) : progression en direct, pas de bandeau « worktree introuvable », pas de nettoyage', async () => {
+  open(
+    snapshot({
+      workspaces: [ws()],
+      topics: [topic({ state: 'draft', worktreeMissing: true })],
+      runs: [run],
+      actions: [action({})],
+    }),
+  );
+  expect(await screen.findByText('Préparation du worktree…')).toBeTruthy();
+  expect(text('1-3.preparation.bandeau.cause')).toBe('feat/s depuis origin/main');
+  expect(screen.queryByText('Worktree introuvable')).toBeNull();
+  expect(screen.queryByLabelText('Plus d’actions')).toBeNull();
+});
+
+test('brouillon : la sortie de topic.create en direct est affichée', async () => {
+  open(
+    snapshot({
+      workspaces: [ws()],
+      topics: [topic({ state: 'draft', worktreeMissing: true })],
+      runs: [run],
+      actions: [action({})],
+    }),
+  );
+  await screen.findByText('Préparation du worktree…');
+  await act(async () => {
+    FakeSocket.all[0]!.open();
+    FakeSocket.all[0]!.push({
+      kind: 'ephemeral',
+      type: 'action.output',
+      actionId: 'ac_1',
+      stream: 'stdout',
+      line: 'git fetch --quiet origin main',
+    });
+  });
+  expect(await screen.findByText('git fetch --quiet origin main')).toBeTruthy();
+});
+
+test('brouillon : « Ignorer » appelle topic.setup-ignorer et revient à l’accueil', async () => {
+  const h = openAvecChemin(
+    snapshot({
+      workspaces: [ws()],
+      topics: [topic({ state: 'draft', worktreeMissing: true })],
+      runs: [run],
+      actions: [action({})],
+    }),
+  );
+  h.respond.set('POST /api/topics/tp_1/actions/topic.setup-ignorer', json(204, {}));
+  await userEvent.click(await screen.findByText('Ignorer'));
+  await waitFor(() =>
+    expect(
+      h.calls.some(
+        (c) => c.method === 'POST' && c.url === '/api/topics/tp_1/actions/topic.setup-ignorer',
+      ),
+    ).toBe(true),
+  );
+  await waitFor(() => expect(screen.getByTestId('chemin').textContent).toBe('/'));
+});
+
+test('brouillon abandonné par le script : le sujet disparu affiche la cause plutôt qu’un 404 générique', async () => {
+  open(
+    snapshot({
+      workspaces: [ws()],
+      topics: [],
+      actions: [action({ state: 'needs_human', exitCode: 2 })],
+    }),
+  );
+  expect(await screen.findByText('La préparation du sujet a échoué')).toBeTruthy();
+  expect(screen.queryByText('Sujet introuvable ou archivé.')).toBeNull();
+});
+
+test('sujet archivé : chronologie lue à part, bouton « Retirer la mention du stash »', async () => {
+  // L'effet de useArchive part dès le premier rendu (present=false tant que l'état n'est
+  // pas chargé) : la route doit être connue avant open(), pas ajoutée après coup.
+  const h = open(snapshot({ workspaces: [ws()], topics: [] }), 'tp_1', {
+    'GET /api/topics/tp_1/events': json(200, {
+      topic: {
+        id: 'tp_1',
+        workspaceId: 'ws_1',
+        slug: 's',
+        title: 'Sujet clos',
+        branch: 'feat/s',
+        base: 'main',
+        worktree: '/w/s',
+        state: 'archived',
+        stashRef: 'd'.repeat(40),
+        createdAt: 't',
+        updatedAt: 't',
+      },
+      events: [
+        {
+          seq: 1,
+          v: 1,
+          id: 'e1',
+          ts: '2026-10-15T10:00:00.000Z',
+          source: 'daemon',
+          type: 'topic.state',
+          data: { state: 'archived' },
+        },
+      ],
+    }),
+  });
+  await screen.findByText('Sujet clos');
+  expect(text('1-3.archive.etat')).toBe('archived');
+  expect(screen.getByText(/Sujet passé en/)).toBeTruthy();
+  h.respond.set('POST /api/topics/tp_1/actions/archive.oublier-stash', json(200, { found: true }));
+  await userEvent.click(screen.getByText('Retirer la mention du stash'));
+  await waitFor(() =>
+    expect(
+      h.calls.some(
+        (c) => c.method === 'POST' && c.url === '/api/topics/tp_1/actions/archive.oublier-stash',
+      ),
+    ).toBe(true),
+  );
+  await screen.findByText('Stash supprimé.');
 });
 
 test('loading : squelettes ; error : bandeau avec « Réessayer » ; liste de gauche indisponible', async () => {

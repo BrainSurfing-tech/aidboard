@@ -41,7 +41,7 @@ test('les contraintes CHECK refusent un état inconnu', () => {
   const insert = (state: string) =>
     db
       .prepare(
-        "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s',?,NULL,'disabled','t','t')",
+        "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s',?,NULL,'disabled','t','t',NULL,NULL,NULL)",
       )
       .run(state);
   expect(() => insert('foo')).toThrow(/CHECK/);

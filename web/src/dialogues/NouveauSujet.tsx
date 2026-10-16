@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { TopicType } from '../../../src/shared/model.js';
 import { slugify } from '../../../src/shared/slug.js';
@@ -15,7 +15,7 @@ export function NouveauSujet({
   onAddWorkspace: () => void;
   initialWorkspaceId?: string;
 }) {
-  const { state, outputs, call } = useAid();
+  const { state, call } = useAid();
   const navigate = useNavigate();
   const workspaces = state?.workspaces ?? [];
   // le dernier enregistré : on vient en général de l'ajouter
@@ -26,7 +26,7 @@ export function NouveauSujet({
   const [title, setTitle] = useState('');
   const [type, setType] = useState<TopicType>('feat');
   const [error, setError] = useState<string | null>(null);
-  const [actionId, setActionId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const slug = useMemo(() => {
     try {
@@ -36,31 +36,27 @@ export function NouveauSujet({
     }
   }, [title]);
 
-  const action = state?.actions.find((a) => a.id === actionId);
-  useEffect(() => {
-    if (action?.state === 'succeeded' && action.topicId) {
-      onClose();
-      navigate(`/sujets/${action.topicId}`);
-    }
-  }, [action, navigate, onClose]);
-
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setSubmitting(true);
     try {
-      const r = await call<{ actionId: string }>('POST', '/api/topics', {
+      // D15 : le sujet existe en draft dès cette requête — l'écran 2.2 (Sujet.tsx) prend le
+      // relais pour suivre topic.create, pas besoin d'attendre son succès ici.
+      const r = await call<{ topicId: string }>('POST', '/api/topics', {
         workspaceId,
         title: title.trim(),
         type,
       });
-      setActionId(r.actionId);
+      onClose();
+      navigate(`/sujets/${r.topicId}`);
     } catch (err) {
       setError(err instanceof AidApiError ? err.message : String(err));
+      setSubmitting(false);
     }
   }
 
-  const running = actionId !== null && (!action || action.state === 'running');
-  const lines = actionId ? (outputs[actionId] ?? []) : [];
+  const running = submitting;
   return (
     <Dialogue titre="Nouveau sujet" onClose={onClose}>
       <form onSubmit={submit} className="formulaire" aria-label="Créer un sujet">
@@ -120,22 +116,6 @@ export function NouveauSujet({
           <p className="message-erreur" role="alert">
             {error}
           </p>
-        )}
-        {actionId && (
-          <>
-            <div className="sortie-action" role="log" aria-label="Sortie de la création">
-              {lines.map((l, i) => (
-                <div key={i}>{l.line}</div>
-              ))}
-            </div>
-            {action && action.state !== 'running' && action.state !== 'succeeded' && (
-              <p className="message-erreur" role="alert">
-                {action.state === 'needs_human'
-                  ? 'Action humaine requise : voir la sortie ci-dessus.'
-                  : 'La création a échoué : voir la sortie ci-dessus.'}
-              </p>
-            )}
-          </>
         )}
         <div className="dialogue-actions">
           <button className="bouton bouton--fantome" type="button" onClick={onClose}>

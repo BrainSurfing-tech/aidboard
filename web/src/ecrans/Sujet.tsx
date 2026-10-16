@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import type { StoredEvent } from '../../../src/shared/events.js';
 import type { Agent, IndexState } from '../../../src/shared/model.js';
 import { AidApiError } from '../data/api.js';
 import { useAid } from '../data/useAidState.js';
@@ -8,9 +9,36 @@ import { Terminal } from '../terminal/Terminal.js';
 import { Layout } from '../ui/Layout.js';
 import { Memoire } from '../ui/Memoire.js';
 import { agentView, Point } from '../ui/Statut.js';
+import type { ArchivedTopic } from './useArchive.js';
+import { useArchive } from './useArchive.js';
 import { Cote } from './Cote.js';
 import { useNettoyage } from './useNettoyage.js';
 import { roleLabel } from '../ui/roles.js';
+
+// 06.10 : libellé court d'un événement du journal pour la chronologie de l'écran archive.
+function libelleEvenement(e: StoredEvent): string {
+  const d = e.data as Record<string, unknown>;
+  switch (e.type) {
+    case 'topic.state':
+      return `Sujet passé en « ${String(d.state ?? '?')} »`;
+    case 'topic.pr':
+      return d.prNumber ? `PR #${String(d.prNumber)} ouverte` : 'PR mise à jour';
+    case 'topic.stash':
+      return d.stashRef
+        ? 'Modifications non commitées mises de côté (stash)'
+        : 'Mention du stash retirée';
+    case 'action.started':
+      return `Action lancée : ${String(d.action ?? '?')}`;
+    case 'action.finished':
+      return `Action terminée : ${String(d.action ?? '?')} (${String(d.outcome ?? '?')})`;
+    case 'agent.spawned':
+      return 'Agent démarré';
+    case 'agent.exited':
+      return 'Agent arrêté';
+    default:
+      return e.type;
+  }
+}
 
 const INDEX_LABEL: Record<IndexState, string> = {
   disabled: 'index absent : lecture directe',
@@ -28,13 +56,17 @@ const KINDS: Array<{ kind: Kind; label: string }> = [
 ];
 
 function Contenu({ topicId }: { topicId: string }) {
-  const { state, daemon, retry, call } = useAid();
+  const { state, outputs, daemon, retry, call } = useAid();
+  const navigate = useNavigate();
   // « Ouvrir le terminal → » de la boîte de réception arrive avec ?agent= : son onglet est choisi
   const [params] = useSearchParams();
   const [selected, setSelected] = useState<string | null>(params.get('agent'));
   const [menu, setMenu] = useState<'aucun' | 'agent' | 'plus'>('aucun');
   const [erreur, setErreur] = useState<string | null>(null);
+  const [ignoring, setIgnoring] = useState(false);
   const nettoyage = useNettoyage(topicId);
+  const present = !!state?.topics.some((t) => t.id === topicId);
+  const archive = useArchive(topicId, present);
   const down = daemon === 'injoignable' || daemon === 'session-expiree';
 
   if (!state) {
@@ -91,12 +123,50 @@ function Contenu({ topicId }: { topicId: string }) {
 
   const topic = state.topics.find((t) => t.id === topicId);
   if (!topic) {
+    // 06.10 : /api/state exclut les sujets archivés par défaut, useArchive relit leur
+    // journal à part dès qu'ils manquent à l'instantané vivant.
+    if (archive.topic) {
+      return <EcranArchive topic={archive.topic} events={archive.events} archive={archive} />;
+    }
+    if (!archive.loaded) {
+      return (
+        <main className="page sujet-contenu">
+          <div className="squelette" data-node="1-3.archive.chargement">
+            <span className="sq sq--puce" />
+            <span className="sq sq--grand-bloc" />
+          </div>
+        </main>
+      );
+    }
+    // Un brouillon abandonné par le script lui-même (06.1, afterFailure) : la ligne a
+    // disparu, mais l'action (et sa sortie) restent lisibles pour expliquer pourquoi.
+    const echec = state.actions.find(
+      (a) =>
+        a.topicId === topicId &&
+        a.action === 'topic.create' &&
+        a.state !== 'running' &&
+        a.state !== 'succeeded',
+    );
     return (
       <main className="page sujet-contenu">
-        <section className="vide" data-node="1-3.vide">
-          <p className="vide-message" data-node="1-3.vide.message">
-            Sujet introuvable ou archivé.
-          </p>
+        <section className="zone-erreur" data-node={echec ? '1-3.preparation-echec' : '1-3.vide'}>
+          {echec ? (
+            <div className="bandeau-erreur" data-node="1-3.preparation-echec.bandeau" role="alert">
+              <p className="bandeau-titre" data-node="1-3.preparation-echec.bandeau.titre">
+                La préparation du sujet a échoué
+              </p>
+              <p className="texte-discret" data-node="1-3.preparation-echec.bandeau.cause">
+                {(outputs[echec.id] ?? []).at(-1)?.line ??
+                  (echec.state === 'needs_human'
+                    ? 'Action humaine requise.'
+                    : 'La préparation a échoué.')}
+              </p>
+            </div>
+          ) : (
+            <p className="vide-message" data-node="1-3.vide.message">
+              Sujet introuvable ou archivé.
+            </p>
+          )}
           <Link className="lien" to="/">
             ← Retour aux sujets
           </Link>
@@ -138,6 +208,18 @@ function Contenu({ topicId }: { topicId: string }) {
     }
   }
 
+  async function ignorer() {
+    setErreur(null);
+    setIgnoring(true);
+    try {
+      await call('POST', `/api/topics/${topicId}/actions/topic.setup-ignorer`, {});
+      navigate('/');
+    } catch (err) {
+      setErreur(err instanceof AidApiError ? err.message : String(err));
+      setIgnoring(false);
+    }
+  }
+
   return (
     <main className="page sujet-contenu">
       <div className="sujet-entete" data-node="1-3.entete">
@@ -169,18 +251,20 @@ function Contenu({ topicId }: { topicId: string }) {
             >
               Ouvrir dans l’éditeur
             </button>
-            <button
-              className="bouton-icone"
-              data-node="1-3.actions.plus"
-              data-action="actions.menu"
-              type="button"
-              aria-label="Plus d’actions"
-              aria-expanded={menu === 'plus'}
-              onClick={() => setMenu(menu === 'plus' ? 'aucun' : 'plus')}
-            >
-              ⋯
-            </button>
-            {menu === 'plus' && (
+            {topic.state !== 'draft' && (
+              <button
+                className="bouton-icone"
+                data-node="1-3.actions.plus"
+                data-action="actions.menu"
+                type="button"
+                aria-label="Plus d’actions"
+                aria-expanded={menu === 'plus'}
+                onClick={() => setMenu(menu === 'plus' ? 'aucun' : 'plus')}
+              >
+                ⋯
+              </button>
+            )}
+            {menu === 'plus' && topic.state !== 'draft' && (
               <button
                 className="bouton bouton--danger"
                 data-action="topic.cleanup"
@@ -247,7 +331,52 @@ function Contenu({ topicId }: { topicId: string }) {
       )}
       <div className="sujet-grille">
         <div className="colonne">
-          {topic.worktreeMissing ? (
+          {topic.state === 'draft' ? (
+            <section className="zone-erreur" data-node="1-3.preparation">
+              <div className="bandeau-erreur" data-node="1-3.preparation.bandeau">
+                <div className="bandeau-texte">
+                  <p className="bandeau-titre" data-node="1-3.preparation.bandeau.titre">
+                    Préparation du worktree…
+                  </p>
+                  <p
+                    className="texte-discret"
+                    data-node="1-3.preparation.bandeau.cause"
+                    data-bind="sujet.preparation.cause"
+                  >
+                    {topic.branch} depuis origin/{topic.base}
+                  </p>
+                </div>
+                <button
+                  className="bouton bouton--fantome"
+                  data-node="1-3.preparation.ignorer"
+                  data-action="topic.setup-ignorer"
+                  type="button"
+                  onClick={() => void ignorer()}
+                  disabled={ignoring}
+                >
+                  Ignorer
+                </button>
+              </div>
+              {(() => {
+                const prepa = state.actions.find(
+                  (a) => a.topicId === topic.id && a.action === 'topic.create',
+                );
+                const lines = prepa ? (outputs[prepa.id] ?? []) : [];
+                return lines.length > 0 ? (
+                  <div
+                    className="sortie-action"
+                    role="log"
+                    aria-label="Préparation du sujet"
+                    data-node="1-3.preparation.journal"
+                  >
+                    {lines.map((l, i) => (
+                      <div key={i}>{l.line}</div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+            </section>
+          ) : topic.worktreeMissing ? (
             <section className="zone-erreur" data-node="1-3.erreur">
               <div className="bandeau-erreur" data-node="1-3.erreur.bandeau" role="alert">
                 <p className="bandeau-titre" data-node="1-3.erreur.bandeau.titre">
@@ -323,17 +452,15 @@ function Contenu({ topicId }: { topicId: string }) {
                           {roleLabel(a.role)}
                         </span>
                       </button>
-                      {LIVE.includes(a.status) && (
-                        <button
-                          className="bouton bouton--fantome"
-                          data-node={`1-3.terminaux.onglet-${i + 1}.arreter`}
-                          data-action="agent.arreter"
-                          type="button"
-                          onClick={() => void stop(a.id)}
-                        >
-                          Arrêter
-                        </button>
-                      )}
+                      <button
+                        className="bouton bouton--fantome"
+                        data-node={`1-3.terminaux.onglet-${i + 1}.arreter`}
+                        data-action={LIVE.includes(a.status) ? 'agent.arreter' : 'agent.fermer'}
+                        type="button"
+                        onClick={() => void stop(a.id)}
+                      >
+                        {LIVE.includes(a.status) ? 'Arrêter' : 'Fermer'}
+                      </button>
                     </span>
                   );
                 })}
@@ -374,6 +501,92 @@ function Contenu({ topicId }: { topicId: string }) {
           />
         </div>
       </div>
+    </main>
+  );
+}
+
+// 06.10 (écran 2.9) : chronologie en lecture seule + oubli du stash, sans nouvelle table.
+function EcranArchive({
+  topic,
+  events,
+  archive,
+}: {
+  topic: ArchivedTopic;
+  events: StoredEvent[];
+  archive: ReturnType<typeof useArchive>;
+}) {
+  return (
+    <main className="page sujet-contenu">
+      <div className="sujet-entete" data-node="1-3.archive.entete">
+        <div className="entete-texte">
+          <p className="fil-ariane" data-node="1-3.archive.fil-ariane">
+            <Link data-action="nav.accueil" to="/">
+              Sujets
+            </Link>{' '}
+            / archive
+          </p>
+          <h1 className="titre-ecran" data-node="1-3.archive.titre">
+            {topic.title}
+          </h1>
+        </div>
+        <div className="sujet-meta">
+          <span className="pastille pastille--etat" data-node="1-3.archive.etat">
+            {topic.state}
+          </span>
+          <span className="pastille pastille--code" data-node="1-3.archive.branche">
+            {topic.branch}
+          </span>
+          <span className="pastille pastille--discret" data-node="1-3.archive.base">
+            base origin/{topic.base}
+          </span>
+          <span className="pastille pastille--discret" data-node="1-3.archive.worktree">
+            worktree supprimé
+          </span>
+        </div>
+      </div>
+      <section
+        className="carte-panneau archive-panneau"
+        data-node="1-3.archive.panneau"
+        aria-label="Sujet archivé"
+      >
+        <h2 className="titre-panneau" data-node="1-3.archive.panneau.titre">
+          Sujet archivé
+        </h2>
+        <ol
+          className="chronologie"
+          data-node="1-3.archive.chronologie"
+          aria-label="Chronologie du sujet"
+        >
+          {events.map((e) => (
+            <li className="chrono" key={e.seq}>
+              <span className="chrono-heure">{new Date(e.ts).toLocaleTimeString('fr-FR')}</span>
+              <span className="chrono-texte">{libelleEvenement(e)}</span>
+            </li>
+          ))}
+        </ol>
+        {topic.stashRef && (
+          <div className="archive-stash" data-node="1-3.archive.stash">
+            <p className="texte-faible" data-node="1-3.archive.stash.note">
+              Stash récupérable manuellement : <code>git stash list</code>.
+            </p>
+            <button
+              className="bouton bouton--fantome"
+              type="button"
+              data-node="1-3.archive.stash.oublier"
+              data-action="archive.oublier-stash"
+              onClick={() => void archive.oublierStash()}
+              disabled={archive.oubli === 'en-cours'}
+            >
+              Retirer la mention du stash
+            </button>
+          </div>
+        )}
+        {archive.oubliMessage && (
+          <p className="texte-discret" data-node="1-3.archive.stash.resultat">
+            {archive.oubliMessage}
+          </p>
+        )}
+      </section>
     </main>
   );
 }

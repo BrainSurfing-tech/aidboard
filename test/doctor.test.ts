@@ -73,6 +73,19 @@ test('claude, codex, codegraph, gh et ollama absents : ⚠ seulement, avec leur 
   expect(checks.some((c) => c.level === 'ko')).toBe(false);
 });
 
+test('gh présent mais non authentifié : ⚠ distinct de l’absence du binaire', async () => {
+  const checks = await levels({
+    version: async (bin) => (bin === 'gh' ? null : 'git version 2.54.0'),
+  });
+  expect(checks).toContain('warn:gh non authentifié');
+  expect(checks.some((l) => l === 'warn:gh introuvable')).toBe(false);
+});
+
+test('gh absent : pas de vérification de session (rien à authentifier)', async () => {
+  const checks = await levels({ has: (b) => b !== 'gh' });
+  expect(checks.some((l) => l.includes('authentifié'))).toBe(false);
+});
+
 test('~/.aid autre que 0700 : ✗ ; absent : rien à dire', async () => {
   expect(await levels({ homeMode: () => 0o40755 })).toContain('ko:~/.aid en 755');
   expect((await levels({ homeMode: () => null })).some((l) => l.includes('~/.aid'))).toBe(false);

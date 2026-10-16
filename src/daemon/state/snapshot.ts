@@ -37,6 +37,9 @@ export function buildSnapshot(db: Db, all = false): StateSnapshot {
     phase: r.phase as Topic['phase'],
     indexState: r.index_state as Topic['indexState'],
     worktreeMissing: !existsSync(r.worktree as string),
+    prNumber: r.pr_number as number | null,
+    prUrl: r.pr_url as string | null,
+    stashRef: r.stash_ref as string | null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   }));
@@ -51,7 +54,11 @@ export function buildSnapshot(db: Db, all = false): StateSnapshot {
       createdAt: r.created_at as string,
     }));
   const runIds = new Set(runs.map((r) => r.id));
-  const agents = (db.prepare('SELECT * FROM agents ORDER BY created_at, id').all() as Row[])
+  const agents = (
+    db
+      .prepare('SELECT * FROM agents WHERE closed_at IS NULL ORDER BY created_at, id')
+      .all() as Row[]
+  )
     .filter((r) => runIds.has(r.run_id as string))
     .map((r): Agent => ({
       id: r.id as string,

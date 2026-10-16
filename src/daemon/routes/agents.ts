@@ -69,11 +69,16 @@ export function registerAgentRoutes(
 
   app.delete('/api/agents/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!deps.db.prepare('SELECT 1 FROM agents WHERE id = ?').get(id))
-      throw new AidHttpError(404, 'agent inconnu');
+    const row = deps.db.prepare('SELECT closed_at FROM agents WHERE id = ?').get(id) as
+      { closed_at: string | null } | undefined;
+    if (!row) throw new AidHttpError(404, 'agent inconnu');
     const live = deps.agents.get(id);
-    if (!live || live.exited) throw new AidHttpError(409, 'cet agent est déjà terminé');
-    void deps.agents.stop(id, 'user');
-    return reply.code(202).send({ id });
+    if (live && !live.exited) {
+      void deps.agents.stop(id, 'user');
+      return reply.code(202).send({ id });
+    }
+    if (row.closed_at) throw new AidHttpError(409, 'cet agent est déjà fermé');
+    deps.agents.close(id);
+    return reply.code(200).send({ id });
   });
 }

@@ -64,6 +64,25 @@ export function project(tx: Db, e: AidEvent): void {
         e.topicId,
       );
       break;
+    case 'topic.branch':
+      tx.prepare('UPDATE topics SET branch = ?, updated_at = ? WHERE id = ?').run(
+        d.branch,
+        e.ts,
+        e.topicId,
+      );
+      break;
+    case 'topic.pr':
+      tx.prepare(
+        "UPDATE topics SET state = 'review', pr_number = ?, pr_url = ?, updated_at = ? WHERE id = ?",
+      ).run(d.prNumber ?? null, d.prUrl ?? null, e.ts, e.topicId);
+      break;
+    case 'topic.stash':
+      tx.prepare('UPDATE topics SET stash_ref = ?, updated_at = ? WHERE id = ?').run(
+        d.stashRef ?? null,
+        e.ts,
+        e.topicId,
+      );
+      break;
     case 'agent.spawned':
       tx.prepare("UPDATE agents SET status = 'starting', pid = ?, updated_at = ? WHERE id = ?").run(
         d.pid ?? null,
