@@ -28,6 +28,7 @@
     "@fastify/static": "^10.1.6",
     "@fastify/websocket": "^11.3.4",
     "@fontsource/inter": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@sinclair/typebox": "^0.34.52",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
@@ -39,9 +40,11 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router": "^8.4.0",
+    "sqlite-vec": "^0.1.9",
     "ulid": "^3.0.2",
     "ws": "^8.22.0",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -23,6 +23,9 @@ import { registerDaemonRoutes } from './routes/daemon.js';
 import { registerAgentRoutes } from './routes/agents.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
+import { registerMemoryRoutes } from './routes/memory.js';
+import type { MemoryProposals } from './memory/maintain.js';
+import type { MemoryService } from './memory/service.js';
 import { type AuthState, registerSecurity } from './security.js';
 import { registerEventSocket } from './ws/events.js';
 import { registerPtySocket } from './ws/pty.js';
@@ -33,6 +36,8 @@ export interface ServerDeps {
   db: Db;
   store: EventStore;
   agents: AgentManager;
+  memory?: MemoryService;
+  memoryProposals?: MemoryProposals;
   paths: AidPaths;
   procVersion?: () => string | null;
   codegraphBin?: string;
@@ -121,6 +126,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     indexer,
   });
   registerEventRoutes(app, deps.db, deps.store);
+  if (deps.memory) {
+    registerMemoryRoutes(app, {
+      db: deps.db,
+      memory: deps.memory,
+      proposals: deps.memoryProposals,
+    });
+  }
   registerEventSocket(app, deps.store);
   registerPtySocket(app, {
     db: deps.db,
