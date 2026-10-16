@@ -17,8 +17,8 @@ const FIVE_MIN = 5 * 60_000;
 const TWO_MIN = 2 * 60_000;
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
 
-// Actions d'un sujet connues en v0.1
-export const TOPIC_ACTIONS = ['topic.cleanup', 'editor.open'] as const;
+// Actions d'un sujet connues en v0.1 et au chantier 06
+export const TOPIC_ACTIONS = ['topic.cleanup', 'editor.open', 'topic.setup-ignorer'] as const;
 
 const CreateBody = Type.Object(
   {
@@ -86,9 +86,45 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
     const topicId = `tp_${ulid()}`;
     const branch = `${body.type}/${slug}`;
     const worktree = join(ws.worktrees_dir, slug);
+    // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
+    const indexed = existsSync(join(ws.root, '.codegraph'));
+    const now = new Date().toISOString();
+
+    // D15 : le sujet existe en `draft` dès la requête, avant que le script ne tourne.
+    deps.actions.store.append(
+      {
+        source: 'daemon',
+        type: 'topic.state',
+        workspaceId: ws.id,
+        topicId,
+        data: { state: 'draft', indexState: indexed ? 'indexing' : 'disabled' },
+      },
+      (tx) => {
+        tx.prepare('INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)').run(
+          topicId,
+          ws.id,
+          slug,
+          body.title,
+          body.type,
+          branch,
+          ws.base_branch,
+          worktree,
+          'draft',
+          indexed ? 'indexing' : 'disabled',
+          now,
+          now,
+        );
+        tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
+          `run_${ulid()}`,
+          topicId,
+          now,
+        );
+      },
+    );
 
     const { actionId } = startAction(deps.actions, {
       workspaceId: ws.id,
+      topicId,
       action: 'topic.create',
       script: join(scripts, 'topic-create.sh'),
       cwd: ws.root,
@@ -104,41 +140,23 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         AID_WORKTREE: worktree,
       }),
       afterSuccess: () => {
-        // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
-        const indexed = existsSync(join(ws.root, '.codegraph'));
-        const now = new Date().toISOString();
-        deps.actions.store.append(
-          {
-            source: 'daemon',
-            type: 'topic.state',
-            workspaceId: ws.id,
-            topicId,
-            data: { state: 'active', indexState: indexed ? 'indexing' : 'disabled' },
-          },
-          (tx) => {
-            tx.prepare('INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)').run(
-              topicId,
-              ws.id,
-              slug,
-              body.title,
-              body.type,
-              branch,
-              ws.base_branch,
-              worktree,
-              'active',
-              indexed ? 'indexing' : 'disabled',
-              now,
-              now,
-            );
-            tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
-              `run_${ulid()}`,
-              topicId,
-              now,
-            );
-          },
-        );
+        deps.actions.store.append({
+          source: 'daemon',
+          type: 'topic.state',
+          workspaceId: ws.id,
+          topicId,
+          data: { state: 'active' },
+        });
         if (indexed) deps.indexer.start({ id: topicId, workspaceId: ws.id, worktree });
         return { topicId };
+      },
+      // Le brouillon n'a rien créé sur disque : un échec du script le fait disparaître,
+      // le slug redevient immédiatement utilisable (même suppression que topic.setup-ignorer).
+      afterFailure: () => {
+        deps.db.transaction(() => {
+          deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(topicId);
+          deps.db.prepare('DELETE FROM topics WHERE id = ?').run(topicId);
+        })();
       },
     });
     return reply.code(202).send({ actionId, slug, branch });
@@ -167,6 +185,17 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
           `impossible de lancer l'éditeur (${cmd.join(' ')}) : ${(err as Error).message}. Régler « editor » dans ~/.aid/config.yaml.`,
         );
       }
+      return reply.code(204).send();
+    }
+
+    if (actionId === 'topic.setup-ignorer') {
+      if (topic.state !== 'draft') {
+        throw new AidHttpError(409, 'ce sujet n’est plus en préparation');
+      }
+      deps.db.transaction(() => {
+        deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(id);
+        deps.db.prepare('DELETE FROM topics WHERE id = ?').run(id);
+      })();
       return reply.code(204).send();
     }
 

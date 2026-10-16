@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
+import type { StateSnapshot } from '../src/shared/state.js';
 import { startTestDaemon, waitFor, type TestDaemon } from './helpers/daemon.js';
 import { commitFile, makeOriginAndClone, sh } from './helpers/git.js';
 
@@ -177,4 +178,50 @@ test('le journal d’action est écrit', async () => {
   expect(readFileSync(join(t.home, 'logs/actions', `${actionId}.log`), 'utf8')).toContain(
     'worktree',
   );
+});
+
+const state = async () =>
+  (await t.d.app.inject({ url: '/api/state', headers: t.headers })).json<StateSnapshot>();
+
+test('le sujet existe en draft avant que le worktree soit créé, abandon et slug réutilisable', async () => {
+  const { ws } = await setup();
+  const { actionId } = (await create(ws, 'Brouillon')).json<{ actionId: string }>();
+  const before = await state();
+  expect(before.topics).toMatchObject([{ state: 'draft' }]);
+  const topicId = before.topics[0]?.id;
+  if (!topicId) throw new Error('sujet manquant');
+
+  const ignore = await t.d.app.inject({
+    method: 'POST',
+    url: `/api/topics/${topicId}/actions/topic.setup-ignorer`,
+    headers: t.headers,
+  });
+  expect(ignore.statusCode).toBe(204);
+  expect((await state()).topics).toEqual([]);
+
+  // « Slug immédiatement réutilisable » porte sur l'unicité en base (D15), pas sur l'issue
+  // du script abandonné qui tourne toujours en tâche de fond : la recréation est acceptée
+  // tout de suite (202, plus de 409), sans dépendre du timing réel de git.
+  const again = await create(ws, 'Brouillon');
+  expect(again.statusCode).toBe(202);
+
+  // Les deux scripts partagent la file du workspace (D19) : on les laisse aller à leur
+  // terme pour ne rien laisser tourner après la fin du test, sans se prononcer sur leur
+  // issue respective (l'un des deux peut légitimement buter sur « branche déjà là »).
+  await finished(actionId);
+  await finished(again.json<{ actionId: string }>().actionId);
+});
+
+test('topic.setup-ignorer refuse un sujet qui n’est plus en préparation', async () => {
+  const { ws } = await setup();
+  const { actionId } = (await create(ws, 'Déjà actif')).json<{ actionId: string }>();
+  await finished(actionId);
+  const topicId = (await state()).topics[0]?.id;
+  if (!topicId) throw new Error('sujet manquant');
+  const r = await t.d.app.inject({
+    method: 'POST',
+    url: `/api/topics/${topicId}/actions/topic.setup-ignorer`,
+    headers: t.headers,
+  });
+  expect(r.statusCode).toBe(409);
 });
