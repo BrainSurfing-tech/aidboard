@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
@@ -39,6 +39,13 @@ const finished = (actionId: string) =>
 
 const state = async () =>
   (await t.d.app.inject({ url: '/api/state', headers: t.headers })).json<StateSnapshot>();
+
+const syncAction = (topicId: string, action: string) =>
+  t.d.app.inject({
+    method: 'POST',
+    url: `/api/topics/${topicId}/actions/${action}`,
+    headers: t.headers,
+  });
 
 test('topic.sync : rebase sans conflit, avance/retard lus en direct avant et après', async () => {
   const { origin, clone, ws } = await setup();
@@ -104,4 +111,69 @@ test('topic.sync : worktree manquant, 409', async () => {
   });
   expect(sync.statusCode).toBe(409);
   await finished(created.actionId);
+});
+
+test('topic.sync : conflit détecté (code 2), fichiers listés ; sync-annuler nettoie le worktree', async () => {
+  const { clone, ws } = await setup();
+  const created = (
+    await t.d.app.inject({
+      method: 'POST',
+      url: '/api/topics',
+      headers: t.headers,
+      payload: { workspaceId: ws.id, title: 'Conflit', type: 'feat' },
+    })
+  ).json<{ actionId: string; branch: string; slug: string }>();
+  await finished(created.actionId);
+  const wt = join(ws.worktreesDir, created.slug);
+  const topicId = (await state()).topics[0]?.id;
+  if (!topicId) throw new Error('sujet manquant');
+
+  // Même ligne de README.md changée des deux côtés depuis le même point de départ : conflit garanti.
+  commitFile(clone, 'README.md', '# origin a changé\n');
+  sh(clone, 'push', '-q', 'origin', 'main');
+  commitFile(wt, 'README.md', '# le sujet a changé\n');
+
+  const sync = await syncAction(topicId, 'topic.sync');
+  const fin = await finished(sync.json<{ actionId: string }>().actionId);
+  expect(fin.data).toMatchObject({ outcome: 'needs_human', exitCode: 2 });
+  expect(fin.data.result).toMatchObject({ conflict: true, files: ['README.md'] });
+  expect((await gitLiveInfo(wt, 'main')).rebaseInProgress).toBe(true);
+
+  const annuler = await syncAction(topicId, 'topic.sync-annuler');
+  const finAnnuler = await finished(annuler.json<{ actionId: string }>().actionId);
+  expect(finAnnuler.data.outcome).toBe('succeeded');
+  expect((await gitLiveInfo(wt, 'main')).rebaseInProgress).toBe(false);
+  expect(sh(wt, 'status', '--porcelain')).toBe('');
+  expect(sh(wt, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(created.branch);
+});
+
+test('topic.sync-continuer : poursuit le rebase une fois le conflit résolu à la main', async () => {
+  const { clone, ws } = await setup();
+  const created = (
+    await t.d.app.inject({
+      method: 'POST',
+      url: '/api/topics',
+      headers: t.headers,
+      payload: { workspaceId: ws.id, title: 'Résolution', type: 'feat' },
+    })
+  ).json<{ actionId: string; branch: string; slug: string }>();
+  await finished(created.actionId);
+  const wt = join(ws.worktreesDir, created.slug);
+  const topicId = (await state()).topics[0]?.id;
+  if (!topicId) throw new Error('sujet manquant');
+
+  commitFile(clone, 'README.md', '# origin a changé\n');
+  sh(clone, 'push', '-q', 'origin', 'main');
+  commitFile(wt, 'README.md', '# le sujet a changé\n');
+
+  const sync = await syncAction(topicId, 'topic.sync');
+  await finished(sync.json<{ actionId: string }>().actionId);
+
+  writeFileSync(join(wt, 'README.md'), '# résolu à la main\n');
+
+  const cont = await syncAction(topicId, 'topic.sync-continuer');
+  const finCont = await finished(cont.json<{ actionId: string }>().actionId);
+  expect(finCont.data.outcome).toBe('succeeded');
+  expect((await gitLiveInfo(wt, 'main')).rebaseInProgress).toBe(false);
+  expect(sh(wt, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(created.branch);
 });

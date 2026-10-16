@@ -23,6 +23,8 @@ export const TOPIC_ACTIONS = [
   'editor.open',
   'topic.setup-ignorer',
   'topic.sync',
+  'topic.sync-continuer',
+  'topic.sync-annuler',
 ] as const;
 
 const CreateBody = Type.Object(
@@ -204,12 +206,19 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       return reply.code(204).send();
     }
 
-    if (actionId === 'topic.sync') {
+    if (
+      actionId === 'topic.sync' ||
+      actionId === 'topic.sync-continuer' ||
+      actionId === 'topic.sync-annuler'
+    ) {
       if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const extra: Record<string, string> = {};
+      if (actionId === 'topic.sync-continuer') extra.AID_SYNC_CONTINUE = '1';
+      if (actionId === 'topic.sync-annuler') extra.AID_SYNC_ABORT = '1';
       const { actionId: runId } = startAction(deps.actions, {
         workspaceId: ws.id,
         topicId: id,
-        action: 'topic.sync',
+        action: actionId,
         script: join(scripts, 'topic-sync.sh'),
         cwd: topic.worktree,
         timeoutMs: FIVE_MIN,
@@ -218,6 +227,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
           AID_BRANCH: topic.branch,
           AID_BASE: topic.base,
           AID_WORKTREE: topic.worktree,
+          ...extra,
         }),
       });
       return reply.code(202).send({ actionId: runId });
