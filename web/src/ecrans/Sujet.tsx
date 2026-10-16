@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import type { Agent, IndexState } from '../../../src/shared/model.js';
 import { AidApiError } from '../data/api.js';
 import { useAid } from '../data/useAidState.js';
@@ -28,12 +28,14 @@ const KINDS: Array<{ kind: Kind; label: string }> = [
 ];
 
 function Contenu({ topicId }: { topicId: string }) {
-  const { state, daemon, retry, call } = useAid();
+  const { state, outputs, daemon, retry, call } = useAid();
+  const navigate = useNavigate();
   // « Ouvrir le terminal → » de la boîte de réception arrive avec ?agent= : son onglet est choisi
   const [params] = useSearchParams();
   const [selected, setSelected] = useState<string | null>(params.get('agent'));
   const [menu, setMenu] = useState<'aucun' | 'agent' | 'plus'>('aucun');
   const [erreur, setErreur] = useState<string | null>(null);
+  const [ignoring, setIgnoring] = useState(false);
   const nettoyage = useNettoyage(topicId);
   const down = daemon === 'injoignable' || daemon === 'session-expiree';
 
@@ -91,12 +93,35 @@ function Contenu({ topicId }: { topicId: string }) {
 
   const topic = state.topics.find((t) => t.id === topicId);
   if (!topic) {
+    // Un brouillon abandonné par le script lui-même (06.1, afterFailure) : la ligne a
+    // disparu, mais l'action (et sa sortie) restent lisibles pour expliquer pourquoi.
+    const echec = state.actions.find(
+      (a) =>
+        a.topicId === topicId &&
+        a.action === 'topic.create' &&
+        a.state !== 'running' &&
+        a.state !== 'succeeded',
+    );
     return (
       <main className="page sujet-contenu">
-        <section className="vide" data-node="1-3.vide">
-          <p className="vide-message" data-node="1-3.vide.message">
-            Sujet introuvable ou archivé.
-          </p>
+        <section className="zone-erreur" data-node={echec ? '1-3.preparation-echec' : '1-3.vide'}>
+          {echec ? (
+            <div className="bandeau-erreur" data-node="1-3.preparation-echec.bandeau" role="alert">
+              <p className="bandeau-titre" data-node="1-3.preparation-echec.bandeau.titre">
+                La préparation du sujet a échoué
+              </p>
+              <p className="texte-discret" data-node="1-3.preparation-echec.bandeau.cause">
+                {(outputs[echec.id] ?? []).at(-1)?.line ??
+                  (echec.state === 'needs_human'
+                    ? 'Action humaine requise.'
+                    : 'La préparation a échoué.')}
+              </p>
+            </div>
+          ) : (
+            <p className="vide-message" data-node="1-3.vide.message">
+              Sujet introuvable ou archivé.
+            </p>
+          )}
           <Link className="lien" to="/">
             ← Retour aux sujets
           </Link>
@@ -138,6 +163,18 @@ function Contenu({ topicId }: { topicId: string }) {
     }
   }
 
+  async function ignorer() {
+    setErreur(null);
+    setIgnoring(true);
+    try {
+      await call('POST', `/api/topics/${topicId}/actions/topic.setup-ignorer`, {});
+      navigate('/');
+    } catch (err) {
+      setErreur(err instanceof AidApiError ? err.message : String(err));
+      setIgnoring(false);
+    }
+  }
+
   return (
     <main className="page sujet-contenu">
       <div className="sujet-entete" data-node="1-3.entete">
@@ -169,18 +206,20 @@ function Contenu({ topicId }: { topicId: string }) {
             >
               Ouvrir dans l’éditeur
             </button>
-            <button
-              className="bouton-icone"
-              data-node="1-3.actions.plus"
-              data-action="actions.menu"
-              type="button"
-              aria-label="Plus d’actions"
-              aria-expanded={menu === 'plus'}
-              onClick={() => setMenu(menu === 'plus' ? 'aucun' : 'plus')}
-            >
-              ⋯
-            </button>
-            {menu === 'plus' && (
+            {topic.state !== 'draft' && (
+              <button
+                className="bouton-icone"
+                data-node="1-3.actions.plus"
+                data-action="actions.menu"
+                type="button"
+                aria-label="Plus d’actions"
+                aria-expanded={menu === 'plus'}
+                onClick={() => setMenu(menu === 'plus' ? 'aucun' : 'plus')}
+              >
+                ⋯
+              </button>
+            )}
+            {menu === 'plus' && topic.state !== 'draft' && (
               <button
                 className="bouton bouton--danger"
                 data-action="topic.cleanup"
@@ -247,7 +286,52 @@ function Contenu({ topicId }: { topicId: string }) {
       )}
       <div className="sujet-grille">
         <div className="colonne">
-          {topic.worktreeMissing ? (
+          {topic.state === 'draft' ? (
+            <section className="zone-erreur" data-node="1-3.preparation">
+              <div className="bandeau-erreur" data-node="1-3.preparation.bandeau">
+                <div className="bandeau-texte">
+                  <p className="bandeau-titre" data-node="1-3.preparation.bandeau.titre">
+                    Préparation du worktree…
+                  </p>
+                  <p
+                    className="texte-discret"
+                    data-node="1-3.preparation.bandeau.cause"
+                    data-bind="sujet.preparation.cause"
+                  >
+                    {topic.branch} depuis origin/{topic.base}
+                  </p>
+                </div>
+                <button
+                  className="bouton bouton--fantome"
+                  data-node="1-3.preparation.ignorer"
+                  data-action="topic.setup-ignorer"
+                  type="button"
+                  onClick={() => void ignorer()}
+                  disabled={ignoring}
+                >
+                  Ignorer
+                </button>
+              </div>
+              {(() => {
+                const prepa = state.actions.find(
+                  (a) => a.topicId === topic.id && a.action === 'topic.create',
+                );
+                const lines = prepa ? (outputs[prepa.id] ?? []) : [];
+                return lines.length > 0 ? (
+                  <div
+                    className="sortie-action"
+                    role="log"
+                    aria-label="Préparation du sujet"
+                    data-node="1-3.preparation.journal"
+                  >
+                    {lines.map((l, i) => (
+                      <div key={i}>{l.line}</div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+            </section>
+          ) : topic.worktreeMissing ? (
             <section className="zone-erreur" data-node="1-3.erreur">
               <div className="bandeau-erreur" data-node="1-3.erreur.bandeau" role="alert">
                 <p className="bandeau-titre" data-node="1-3.erreur.bandeau.titre">

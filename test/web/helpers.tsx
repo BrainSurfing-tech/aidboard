@@ -143,5 +143,6 @@ export function setup(ui: ReactElement, state: StateSnapshot | 'down', route = '
   return h;
 }
 
+// 204 n'autorise aucun corps (le constructeur Response le refuse même vide) : on l'omet.
 export const json = (status: number, body: object) => () =>
-  new Response(JSON.stringify(body), { status });
+  new Response(status === 204 ? null : JSON.stringify(body), { status });

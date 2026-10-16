@@ -88,11 +88,11 @@ test('nouveau sujet : l’aperçu suit le titre et le type, sans jamais interpr�
   expect(preview()).toBe('branche : fix/ecran-d-accueil-v2');
 });
 
-test('créer un sujet : la sortie arrive en direct, puis on ouvre le sujet créé', async () => {
+test('créer un sujet : navigation immédiate vers le brouillon (D15), sans attendre le script', async () => {
   const h = setup(<Page />, snapshot({ workspaces: [ws()] }));
   h.respond.set(
     'POST /api/topics',
-    json(202, { actionId: 'ac_1', slug: 'abc', branche: 'feat/abc' }),
+    json(202, { actionId: 'ac_1', slug: 'abc', branch: 'feat/abc', topicId: 'tp_9' }),
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Nouveau sujet' }));
   await userEvent.type(screen.getByLabelText('Titre'), 'Abc');
@@ -102,47 +102,8 @@ test('créer un sujet : la sortie arrive en direct, puis on ouvre le sujet cré�
     title: 'Abc',
     type: 'feat',
   });
-
-  h.state = snapshot({ workspaces: [ws()], actions: [action({})] });
-  await pushEvent();
-  await act(async () => {
-    FakeSocket.all[0]!.push({
-      kind: 'ephemeral',
-      type: 'action.output',
-      actionId: 'ac_1',
-      stream: 'stdout',
-      line: 'copié : .env',
-    });
-  });
-  expect(await screen.findByText('copié : .env')).toBeTruthy();
-  expect((screen.getByRole('button', { name: 'Création…' }) as HTMLButtonElement).disabled).toBe(
-    true,
-  );
-
-  h.state = snapshot({
-    workspaces: [ws()],
-    topics: [topic({ id: 'tp_9' })],
-    actions: [action({ state: 'succeeded', topicId: 'tp_9' })],
-  });
-  await pushEvent();
   await waitFor(() => expect(screen.getByTestId('chemin').textContent).toBe('/sujets/tp_9'));
-});
-
-test('créer un sujet : une action refusée (code 2) est dite, et le formulaire se rouvre', async () => {
-  const h = setup(<Accueil />, snapshot({ workspaces: [ws()] }));
-  h.respond.set('POST /api/topics', json(202, { actionId: 'ac_1' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Nouveau sujet' }));
-  await userEvent.type(screen.getByLabelText('Titre'), 'Déjà');
-  await userEvent.click(screen.getByRole('button', { name: 'Créer le sujet' }));
-  h.state = snapshot({
-    workspaces: [ws()],
-    actions: [action({ state: 'needs_human', exitCode: 2 })],
-  });
-  await pushEvent();
-  expect((await screen.findByRole('alert')).textContent).toContain('Action humaine requise');
-  expect(
-    (screen.getByRole('button', { name: 'Créer le sujet' }) as HTMLButtonElement).disabled,
-  ).toBe(false);
+  expect(screen.queryByRole('dialog', { name: 'Nouveau sujet' })).toBeNull();
 });
 
 test('nettoyer avec des commits non fusionnés : la confirmation répète leur nombre exact', async () => {

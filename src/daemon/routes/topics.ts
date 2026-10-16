@@ -159,7 +159,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         })();
       },
     });
-    return reply.code(202).send({ actionId, slug, branch });
+    return reply.code(202).send({ actionId, slug, branch, topicId });
   });
 
   app.post('/api/topics/:id/actions/:actionId', async (req, reply) => {
