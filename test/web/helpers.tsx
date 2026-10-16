@@ -113,9 +113,21 @@ export interface Harness {
   client: AidClient;
 }
 
-export function setup(ui: ReactElement, state: StateSnapshot | 'down', route = '/'): Harness {
+export function setup(
+  ui: ReactElement,
+  state: StateSnapshot | 'down',
+  route = '/',
+  // Pré-enregistrées avant le montage : un effet qui part dès le premier rendu
+  // (avant que le test n'ait la main pour appeler h.respond.set) ne les rate pas.
+  routes: Record<string, (body: unknown) => Response> = {},
+): Harness {
   FakeSocket.all = [];
-  const h: Harness = { calls: [], respond: new Map(), state, client: undefined as never };
+  const h: Harness = {
+    calls: [],
+    respond: new Map(Object.entries(routes)),
+    state,
+    client: undefined as never,
+  };
   const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;

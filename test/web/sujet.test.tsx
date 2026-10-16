@@ -41,8 +41,11 @@ const page = (
     <Route path="/sujets/:topicId" element={<Sujet />} />
   </Routes>
 );
-const open = (state: ReturnType<typeof snapshot> | 'down', id = 'tp_1') =>
-  setup(page, state, `/sujets/${id}`);
+const open = (
+  state: ReturnType<typeof snapshot> | 'down',
+  id = 'tp_1',
+  routes: Record<string, (body: unknown) => Response> = {},
+) => setup(page, state, `/sujets/${id}`, routes);
 
 function PageAvecChemin() {
   const loc = useLocation();
@@ -300,6 +303,52 @@ test('brouillon abandonné par le script : le sujet disparu affiche la cause plu
   );
   expect(await screen.findByText('La préparation du sujet a échoué')).toBeTruthy();
   expect(screen.queryByText('Sujet introuvable ou archivé.')).toBeNull();
+});
+
+test('sujet archivé : chronologie lue à part, bouton « Retirer la mention du stash »', async () => {
+  // L'effet de useArchive part dès le premier rendu (present=false tant que l'état n'est
+  // pas chargé) : la route doit être connue avant open(), pas ajoutée après coup.
+  const h = open(snapshot({ workspaces: [ws()], topics: [] }), 'tp_1', {
+    'GET /api/topics/tp_1/events': json(200, {
+      topic: {
+        id: 'tp_1',
+        workspaceId: 'ws_1',
+        slug: 's',
+        title: 'Sujet clos',
+        branch: 'feat/s',
+        base: 'main',
+        worktree: '/w/s',
+        state: 'archived',
+        stashRef: 'd'.repeat(40),
+        createdAt: 't',
+        updatedAt: 't',
+      },
+      events: [
+        {
+          seq: 1,
+          v: 1,
+          id: 'e1',
+          ts: '2026-10-15T10:00:00.000Z',
+          source: 'daemon',
+          type: 'topic.state',
+          data: { state: 'archived' },
+        },
+      ],
+    }),
+  });
+  await screen.findByText('Sujet clos');
+  expect(text('1-3.archive.etat')).toBe('archived');
+  expect(screen.getByText(/Sujet passé en/)).toBeTruthy();
+  h.respond.set('POST /api/topics/tp_1/actions/archive.oublier-stash', json(200, { found: true }));
+  await userEvent.click(screen.getByText('Retirer la mention du stash'));
+  await waitFor(() =>
+    expect(
+      h.calls.some(
+        (c) => c.method === 'POST' && c.url === '/api/topics/tp_1/actions/archive.oublier-stash',
+      ),
+    ).toBe(true),
+  );
+  await screen.findByText('Stash supprimé.');
 });
 
 test('loading : squelettes ; error : bandeau avec « Réessayer » ; liste de gauche indisponible', async () => {

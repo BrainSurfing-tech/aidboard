@@ -155,6 +155,25 @@ body {
 .sujet-actions {
   position: relative;
 }
+/* 06.10 : écran archive (2.9), pas de maquette pixel-pour-pixel reprise ici. */
+.carte-panneau {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--surface-1);
+}
+.titre-panneau {
+  font-size: var(--fs-l);
+  font-weight: var(--fw-sb);
+}
+.chronologie {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
 
 .selecteur-dossier {
   display: flex;
@@ -248,4 +267,23 @@ body {
 /* E9 : pas de colonne « À démarrer · issues GitHub » ; la liste prend toute la largeur. */
 .cadre[data-viewport] .boite-colonnes {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.chrono {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--fs-m);
+}
+.chrono-heure {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.archive-stash {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line);
 }

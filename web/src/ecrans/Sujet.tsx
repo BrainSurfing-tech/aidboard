@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import type { StoredEvent } from '../../../src/shared/events.js';
 import type { Agent, IndexState } from '../../../src/shared/model.js';
 import { AidApiError } from '../data/api.js';
 import { useAid } from '../data/useAidState.js';
@@ -8,9 +9,36 @@ import { Terminal } from '../terminal/Terminal.js';
 import { Layout } from '../ui/Layout.js';
 import { Memoire } from '../ui/Memoire.js';
 import { agentView, Point } from '../ui/Statut.js';
+import type { ArchivedTopic } from './useArchive.js';
+import { useArchive } from './useArchive.js';
 import { Cote } from './Cote.js';
 import { useNettoyage } from './useNettoyage.js';
 import { roleLabel } from '../ui/roles.js';
+
+// 06.10 : libellé court d'un événement du journal pour la chronologie de l'écran archive.
+function libelleEvenement(e: StoredEvent): string {
+  const d = e.data as Record<string, unknown>;
+  switch (e.type) {
+    case 'topic.state':
+      return `Sujet passé en « ${String(d.state ?? '?')} »`;
+    case 'topic.pr':
+      return d.prNumber ? `PR #${String(d.prNumber)} ouverte` : 'PR mise à jour';
+    case 'topic.stash':
+      return d.stashRef
+        ? 'Modifications non commitées mises de côté (stash)'
+        : 'Mention du stash retirée';
+    case 'action.started':
+      return `Action lancée : ${String(d.action ?? '?')}`;
+    case 'action.finished':
+      return `Action terminée : ${String(d.action ?? '?')} (${String(d.outcome ?? '?')})`;
+    case 'agent.spawned':
+      return 'Agent démarré';
+    case 'agent.exited':
+      return 'Agent arrêté';
+    default:
+      return e.type;
+  }
+}
 
 const INDEX_LABEL: Record<IndexState, string> = {
   disabled: 'index absent : lecture directe',
@@ -37,6 +65,8 @@ function Contenu({ topicId }: { topicId: string }) {
   const [erreur, setErreur] = useState<string | null>(null);
   const [ignoring, setIgnoring] = useState(false);
   const nettoyage = useNettoyage(topicId);
+  const present = !!state?.topics.some((t) => t.id === topicId);
+  const archive = useArchive(topicId, present);
   const down = daemon === 'injoignable' || daemon === 'session-expiree';
 
   if (!state) {
@@ -93,6 +123,21 @@ function Contenu({ topicId }: { topicId: string }) {
 
   const topic = state.topics.find((t) => t.id === topicId);
   if (!topic) {
+    // 06.10 : /api/state exclut les sujets archivés par défaut, useArchive relit leur
+    // journal à part dès qu'ils manquent à l'instantané vivant.
+    if (archive.topic) {
+      return <EcranArchive topic={archive.topic} events={archive.events} archive={archive} />;
+    }
+    if (!archive.loaded) {
+      return (
+        <main className="page sujet-contenu">
+          <div className="squelette" data-node="1-3.archive.chargement">
+            <span className="sq sq--puce" />
+            <span className="sq sq--grand-bloc" />
+          </div>
+        </main>
+      );
+    }
     // Un brouillon abandonné par le script lui-même (06.1, afterFailure) : la ligne a
     // disparu, mais l'action (et sa sortie) restent lisibles pour expliquer pourquoi.
     const echec = state.actions.find(
@@ -456,6 +501,92 @@ function Contenu({ topicId }: { topicId: string }) {
           />
         </div>
       </div>
+    </main>
+  );
+}
+
+// 06.10 (écran 2.9) : chronologie en lecture seule + oubli du stash, sans nouvelle table.
+function EcranArchive({
+  topic,
+  events,
+  archive,
+}: {
+  topic: ArchivedTopic;
+  events: StoredEvent[];
+  archive: ReturnType<typeof useArchive>;
+}) {
+  return (
+    <main className="page sujet-contenu">
+      <div className="sujet-entete" data-node="1-3.archive.entete">
+        <div className="entete-texte">
+          <p className="fil-ariane" data-node="1-3.archive.fil-ariane">
+            <Link data-action="nav.accueil" to="/">
+              Sujets
+            </Link>{' '}
+            / archive
+          </p>
+          <h1 className="titre-ecran" data-node="1-3.archive.titre">
+            {topic.title}
+          </h1>
+        </div>
+        <div className="sujet-meta">
+          <span className="pastille pastille--etat" data-node="1-3.archive.etat">
+            {topic.state}
+          </span>
+          <span className="pastille pastille--code" data-node="1-3.archive.branche">
+            {topic.branch}
+          </span>
+          <span className="pastille pastille--discret" data-node="1-3.archive.base">
+            base origin/{topic.base}
+          </span>
+          <span className="pastille pastille--discret" data-node="1-3.archive.worktree">
+            worktree supprimé
+          </span>
+        </div>
+      </div>
+      <section
+        className="carte-panneau archive-panneau"
+        data-node="1-3.archive.panneau"
+        aria-label="Sujet archivé"
+      >
+        <h2 className="titre-panneau" data-node="1-3.archive.panneau.titre">
+          Sujet archivé
+        </h2>
+        <ol
+          className="chronologie"
+          data-node="1-3.archive.chronologie"
+          aria-label="Chronologie du sujet"
+        >
+          {events.map((e) => (
+            <li className="chrono" key={e.seq}>
+              <span className="chrono-heure">{new Date(e.ts).toLocaleTimeString('fr-FR')}</span>
+              <span className="chrono-texte">{libelleEvenement(e)}</span>
+            </li>
+          ))}
+        </ol>
+        {topic.stashRef && (
+          <div className="archive-stash" data-node="1-3.archive.stash">
+            <p className="texte-faible" data-node="1-3.archive.stash.note">
+              Stash récupérable manuellement : <code>git stash list</code>.
+            </p>
+            <button
+              className="bouton bouton--fantome"
+              type="button"
+              data-node="1-3.archive.stash.oublier"
+              data-action="archive.oublier-stash"
+              onClick={() => void archive.oublierStash()}
+              disabled={archive.oubli === 'en-cours'}
+            >
+              Retirer la mention du stash
+            </button>
+          </div>
+        )}
+        {archive.oubliMessage && (
+          <p className="texte-discret" data-node="1-3.archive.stash.resultat">
+            {archive.oubliMessage}
+          </p>
+        )}
+      </section>
     </main>
   );
 }

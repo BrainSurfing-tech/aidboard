@@ -10,6 +10,7 @@ import { findAssetDir } from '../assets.js';
 import type { AidConfig } from '../config.js';
 import type { Db } from '../db.js';
 import { AidHttpError } from '../errors.js';
+import { git } from '../git/exec.js';
 import type { Indexer } from '../topics/index.js';
 
 const ulid = monotonicFactory();
@@ -29,6 +30,7 @@ export const TOPIC_ACTIONS = [
   'topic.pr',
   'pr.rafraichir',
   'topic.merge',
+  'archive.oublier-stash',
 ] as const;
 
 const CreateBody = Type.Object(
@@ -60,6 +62,7 @@ interface TopicRow {
   worktree: string;
   state: string;
   pr_number: number | null;
+  stash_ref: string | null;
 }
 
 interface WorkspaceRow {
@@ -174,6 +177,45 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
       },
     });
     return reply.code(202).send({ actionId, slug, branch, topicId });
+  });
+
+  // Chronologie de l'écran archive (06.10) : aucun journal par sujet n'existait encore.
+  // Le sujet est renvoyé en plus des événements : /api/state exclut les archivés par défaut,
+  // donc l'écran archive n'a autrement aucun moyen de lire son titre/branche/stash_ref.
+  app.get('/api/topics/:id/events', async (req) => {
+    const { id } = req.params as { id: string };
+    const row = deps.db.prepare('SELECT * FROM topics WHERE id = ?').get(id) as
+      | {
+          id: string;
+          workspace_id: string;
+          slug: string;
+          title: string;
+          branch: string;
+          base: string;
+          worktree: string;
+          state: string;
+          stash_ref: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) throw new AidHttpError(404, 'sujet inconnu');
+    return {
+      topic: {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        slug: row.slug,
+        title: row.title,
+        branch: row.branch,
+        base: row.base,
+        worktree: row.worktree,
+        state: row.state,
+        stashRef: row.stash_ref,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+      events: deps.actions.store.since(null, { topicId: id }),
+    };
   });
 
   app.post('/api/topics/:id/actions/:actionId', async (req, reply) => {
@@ -378,6 +420,30 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         },
       });
       return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'archive.oublier-stash') {
+      if (topic.stash_ref == null)
+        throw new AidHttpError(409, 'aucun stash à oublier pour ce sujet');
+      const ref = topic.stash_ref;
+      // La pile de stash est partagée entre les worktrees liés : on résout l'index courant
+      // par la SHA captée au nettoyage plutôt que de garder un stash@{n} qui se périme.
+      const found = await deps.actions.queue.run(ws.id, async () => {
+        const list = await git(ws.root, ['stash', 'list', '--format=%H %gd']);
+        const line = list.stdout.split('\n').find((l) => l.startsWith(`${ref} `));
+        const stashId = line?.split(' ')[1];
+        if (!stashId) return false;
+        await git(ws.root, ['stash', 'drop', stashId]);
+        return true;
+      });
+      deps.actions.store.append({
+        source: 'daemon',
+        type: 'topic.stash',
+        workspaceId: ws.id,
+        topicId: id,
+        data: { stashRef: null },
+      });
+      return reply.code(200).send({ found });
     }
 
     const body = (req.body ?? {}) as {
