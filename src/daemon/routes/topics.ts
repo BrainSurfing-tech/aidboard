@@ -27,6 +27,7 @@ export const TOPIC_ACTIONS = [
   'topic.sync-annuler',
   'topic.test',
   'topic.pr',
+  'pr.rafraichir',
 ] as const;
 
 const CreateBody = Type.Object(
@@ -57,6 +58,7 @@ interface TopicRow {
   base: string;
   worktree: string;
   state: string;
+  pr_number: number | null;
 }
 
 interface WorkspaceRow {
@@ -279,6 +281,22 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
             data: { prNumber, prUrl },
           });
         },
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'pr.rafraichir') {
+      if (topic.pr_number == null) throw new AidHttpError(409, 'aucune PR ouverte pour ce sujet');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'pr.rafraichir',
+        script: join(scripts, 'topic-pr-refresh.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_PR_NUMBER: String(topic.pr_number),
+        }),
       });
       return reply.code(202).send({ actionId: runId });
     }

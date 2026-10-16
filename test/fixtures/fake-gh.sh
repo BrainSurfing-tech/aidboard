@@ -8,8 +8,17 @@ if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
   exit "${FAKE_GH_CREATE_EXIT:-0}"
 fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '{"number": %s, "url": "%s"}\n' \
-    "${FAKE_GH_PR_NUMBER:-7}" "${FAKE_GH_PR_URL:-https://github.com/test/test/pull/7}"
+  case "$5" in
+    *statusCheckRollup*)
+      printf '{"statusCheckRollup": %s, "reviews": [], "mergeable": "%s", "title": "t", "body": "b", "url": "%s"}\n' \
+        "${FAKE_GH_CHECKS:-[]}" "${FAKE_GH_MERGEABLE:-MERGEABLE}" \
+        "${FAKE_GH_PR_URL:-https://github.com/test/test/pull/7}"
+      ;;
+    *)
+      printf '{"number": %s, "url": "%s"}\n' \
+        "${FAKE_GH_PR_NUMBER:-7}" "${FAKE_GH_PR_URL:-https://github.com/test/test/pull/7}"
+      ;;
+  esac
   exit 0
 fi
 exit 1
