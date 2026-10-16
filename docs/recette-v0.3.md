@@ -48,13 +48,54 @@ déjà sur le même chemin, avec un faux `gh` (`test/fixtures/`, jamais le vrai 
 
 ## Ce que la recette a révélé (corrigé)
 
-_À compléter une fois la recette manuelle effectuée avec un vrai `gh`._
+Un parcours de bout en bout a été mené le 2026-10-16 contre un vrai dépôt GitHub jetable
+(`morzu117/aid-recette-v03`), un vrai `gh auth status` authentifié, et le démon réel
+construit depuis ce worktree — piloté directement en HTTP (jeton bearer), pas depuis le
+navigateur. **Ceci couvre la logique réelle backend/git/gh de bout en bout, pas la
+vérification visuelle des écrans macOS** : les cases ci-dessous restent décochées, un
+humain doit encore dérouler 2.1 à 2.9 dans le vrai navigateur.
+
+Deux sujets exercés : un parcours heureux complet (brouillon → actif → sync → tests →
+PR → revue → fusion squash → nettoyage confirmé → archivé) et un second sujet dédié au
+conflit de sync et au nettoyage avec stash.
+
+Trouvé et corrigé (06.12) : `topic.pr` échouait réellement (`No commits between main et
+<branche>`) — aucun script ne poussait la branche vers `origin` avant `gh pr create`.
+Voir le commit `fix(topics): 06.12` pour le détail et la couverture ajoutée.
+
+Trouvé, non corrigé, remonté pour arbitrage :
+
+- **Détection squash-merge (D7, 2.7/2.8)** : après une fusion squash réelle et réussie,
+  `topic.cleanup` revient en `needs_human` avec `unmergedCommits: 1` — la comparaison de
+  SHA locaux (`git rev-list origin/<base>..<branche>`, inchangée depuis le chantier 02)
+  ne reconnaît pas un squash-merge comme fusionné, puisque GitHub crée un commit de SHA
+  différent. Documenté comme risque connu dans le tableau v0.1 (« détection par `gh` en
+  v0.3 »), jamais implémenté par ce chantier. Sans danger — aucune perte, juste une
+  confirmation manuelle systématique après un squash-merge.
+- **`gitLiveInfo` jamais câblée (2.3)** : la fonction existe et est testée directement
+  (`test/topic-sync.test.ts`), mais n'est appelée nulle part ailleurs dans le code —
+  ni dans `Topic` (`shared/model.ts`), ni dans `snapshot.ts`, ni dans l'UI web.
+  L'« avance/retard en direct » promise pour l'écran 2.3 n'est pas branchée de bout en
+  bout malgré sa couverture unitaire.
+- **`stashRef` perdu si stash + commits non fusionnés se chevauchent (2.8)** : quand
+  `topic.cleanup` stash un worktree sale (`dirtyAction: "stash"`) *et* que la branche a
+  des commits non fusionnés, le script stashe bien avant de bloquer sur la confirmation
+  — mais la réponse `needs_human` ne contient que `unmergedCommits`, jamais `stashRef`.
+  Le stash existe réellement (vérifié via `git stash list` dans le worktree), mais rien
+  dans la réponse API ni dans l'UI n'en informe l'appelant avant qu'il ne confirme et que
+  le nettoyage se termine — à ce moment-là la seconde invocation du script ne retrouve
+  plus rien à stasher et ne le rapporte pas non plus. Reproduit le 2026-10-16 sur le sujet
+  `recette-conflit-et-stash`. Sans perte de travail (le stash reste listé par `git stash
+  list`), mais invisible depuis l'interface tant que personne ne va chercher à la main.
 
 ## Points ouverts pour la suite
 
-- Aucune case ci-dessus n'a pu être cochée par la session qui a construit ce chantier :
-  elle n'a ni jeton `gh` ni dépôt GitHub de test. Un humain doit dérouler cette grille
-  avant de considérer la v0.3 livrable (voir « Fini quand » de `docs/chantiers/06-git-flow.md`).
+- Les cases d'écran (2.1 à 2.9) n'ont pas pu être cochées : elles demandent une
+  vérification visuelle dans le vrai navigateur macOS, que cette session n'a pas faite
+  (elle a piloté l'API HTTP du démon directement). La logique backend/git/gh qu'elles
+  recouvrent a cependant été exercée réellement — voir ci-dessus. Un humain doit encore
+  dérouler cette grille en UI avant de considérer la v0.3 livrable (voir « Fini quand »
+  de `docs/chantiers/06-git-flow.md`).
 - `topic-pr-refresh` et `topic-merge` n'ont pas d'écran e2e Playwright dédié (`e2e/`) —
   seuls `cleanup.spec.ts`, `reconnexion.spec.ts`, `repli-index.spec.ts` et
   `trois-sujets.spec.ts` existent à ce jour ; aucun point du plan 06 n'en demandait un
