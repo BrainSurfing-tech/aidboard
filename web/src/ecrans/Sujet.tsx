@@ -323,17 +323,15 @@ function Contenu({ topicId }: { topicId: string }) {
                           {roleLabel(a.role)}
                         </span>
                       </button>
-                      {LIVE.includes(a.status) && (
-                        <button
-                          className="bouton bouton--fantome"
-                          data-node={`1-3.terminaux.onglet-${i + 1}.arreter`}
-                          data-action="agent.arreter"
-                          type="button"
-                          onClick={() => void stop(a.id)}
-                        >
-                          Arrêter
-                        </button>
-                      )}
+                      <button
+                        className="bouton bouton--fantome"
+                        data-node={`1-3.terminaux.onglet-${i + 1}.arreter`}
+                        data-action={LIVE.includes(a.status) ? 'agent.arreter' : 'agent.fermer'}
+                        type="button"
+                        onClick={() => void stop(a.id)}
+                      >
+                        {LIVE.includes(a.status) ? 'Arrêter' : 'Fermer'}
+                      </button>
                     </span>
                   );
                 })}

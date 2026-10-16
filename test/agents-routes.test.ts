@@ -31,7 +31,7 @@ const del = (id: string) =>
 const state = async () =>
   (await c.t.d.app.inject({ url: '/api/state', headers: c.t.headers })).json<StateSnapshot>();
 
-test('POST /api/agents : 201, l’agent apparaît dans l’état, DELETE l’arrête', async () => {
+test('POST /api/agents : 201, l’agent apparaît dans l’état, DELETE l’arrête puis le ferme', async () => {
   const { topicId } = await boot();
   const r = await post({ topicId, kind: 'shell' });
   expect(r.statusCode).toBe(201);
@@ -46,6 +46,9 @@ test('POST /api/agents : 201, l’agent apparaît dans l’état, DELETE l’arr
     'sortie',
   );
   expect((await state()).agents[0]).toMatchObject({ status: 'stopped' });
+
+  expect((await del(agent.id)).statusCode).toBe(200);
+  expect((await state()).agents).toEqual([]);
   expect((await del(agent.id)).statusCode).toBe(409);
 });
 

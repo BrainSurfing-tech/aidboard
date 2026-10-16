@@ -363,6 +363,14 @@ export class AgentManager {
     }
   }
 
+  /** Ferme un agent terminé : il disparaît de l'état, sans toucher à son historique d'événements. */
+  close(agentId: string): void {
+    this.deps.db
+      .prepare('UPDATE agents SET closed_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), agentId);
+    this.forget(agentId);
+  }
+
   forgetTopic(topicId: string): void {
     for (const a of [...this.live.values()]) if (a.topicId === topicId) this.forget(a.id);
   }

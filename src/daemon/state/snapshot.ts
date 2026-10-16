@@ -51,7 +51,11 @@ export function buildSnapshot(db: Db, all = false): StateSnapshot {
       createdAt: r.created_at as string,
     }));
   const runIds = new Set(runs.map((r) => r.id));
-  const agents = (db.prepare('SELECT * FROM agents ORDER BY created_at, id').all() as Row[])
+  const agents = (
+    db
+      .prepare('SELECT * FROM agents WHERE closed_at IS NULL ORDER BY created_at, id')
+      .all() as Row[]
+  )
     .filter((r) => runIds.has(r.run_id as string))
     .map((r): Agent => ({
       id: r.id as string,

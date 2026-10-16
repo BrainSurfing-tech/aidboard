@@ -109,7 +109,7 @@ test('un binaire absent : le message du daemon est affiché', async () => {
   );
 });
 
-test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » seulement sur un agent vivant', async () => {
+test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » sur un agent vivant, « Fermer » sur un agent terminé', async () => {
   const h = open(
     snapshot({
       workspaces: [ws()],
@@ -122,20 +122,25 @@ test('onglets : un terminal monté par agent, un seul visible ; « Arrêter » s
     }),
   );
   h.respond.set('DELETE /api/agents/ag_1', json(202, { id: 'ag_1' }));
+  h.respond.set('DELETE /api/agents/ag_2', json(200, { id: 'ag_2' }));
   await screen.findByTestId('term-ag_1');
   expect(screen.getByTestId('term-ag_2').getAttribute('data-visible')).toBe('true');
   expect(screen.getByTestId('term-ag_1').getAttribute('data-visible')).toBe('false');
   expect(text('1-3.terminaux.onglet-1.type')).toBe('claude');
   // « free » n'est pas du français : l'agent lancé à la main est « libre »
   expect(text('1-3.terminaux.onglet-1.role')).toBe('libre');
-  expect(node('1-3.terminaux.onglet-1.arreter')).not.toBeNull();
-  expect(node('1-3.terminaux.onglet-2.arreter')).toBeNull();
+  expect(node('1-3.terminaux.onglet-1.arreter')?.textContent).toBe('Arrêter');
+  expect(node('1-3.terminaux.onglet-2.arreter')?.textContent).toBe('Fermer');
   await userEvent.click(node('1-3.terminaux.onglet-1')!);
   expect(screen.getByTestId('term-ag_1').getAttribute('data-visible')).toBe('true');
   expect(screen.getByTestId('term-ag_2').getAttribute('data-visible')).toBe('false');
   await userEvent.click(node('1-3.terminaux.onglet-1.arreter')!);
   await waitFor(() =>
     expect(h.calls.some((c) => c.method === 'DELETE' && c.url === '/api/agents/ag_1')).toBe(true),
+  );
+  await userEvent.click(node('1-3.terminaux.onglet-2.arreter')!);
+  await waitFor(() =>
+    expect(h.calls.some((c) => c.method === 'DELETE' && c.url === '/api/agents/ag_2')).toBe(true),
   );
 });
 
