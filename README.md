@@ -78,3 +78,7 @@ npm run dev:web         # Vite sur 127.0.0.1:5173, proxy vers le daemon
 
 En dev, lancer le daemon avec `AID_DEV_ORIGIN=http://127.0.0.1:5173` : sans cela, toute écriture depuis Vite répond 403.
 Les plans de développement sont dans `docs/chantiers/`, les maquettes de référence dans `design/maquettes/`.
+
+## Licence
+
+[MIT](LICENSE).
