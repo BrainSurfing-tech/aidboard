@@ -63,3 +63,9 @@ export function readProjectNamespace(root: string): string | undefined {
 export async function remoteBranchExists(root: string, branch: string): Promise<boolean> {
   return (await git(root, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`])).ok;
 }
+
+// null en détached HEAD : pas une branche, rien à rapprocher de topic.branch.
+export async function currentBranch(root: string): Promise<string | null> {
+  const r = await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return r.ok ? r.stdout : null;
+}

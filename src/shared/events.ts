@@ -25,6 +25,7 @@ export const EVENT_TYPES = [
   'action.finished',
   'topic.state',
   'topic.phase',
+  'topic.branch',
   'plan.updated',
   'task.status',
   'instructions.updated',
