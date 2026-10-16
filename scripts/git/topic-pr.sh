@@ -9,6 +9,10 @@ GH="${AID_GH_BIN:-gh}"
 
 "$GH" auth status >/dev/null 2>&1 || die_human "gh non authentifié : lancer « gh auth login »"
 
+# `--no-track` (topic-create.sh) laisse la branche sans amont : gh pr create exige
+# qu'elle existe déjà sur origin, ce qu'aucun script du chantier ne faisait avant.
+git push -u origin "$AID_BRANCH"
+
 "$GH" pr create --title "$AID_PR_TITLE" --body "$AID_PR_BODY" --base "$AID_BASE" \
   --head "$AID_BRANCH" >/dev/null
 

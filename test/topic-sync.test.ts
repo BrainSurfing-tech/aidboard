@@ -92,6 +92,43 @@ test('topic.sync : rebase sans conflit, avance/retard lus en direct avant et apr
   expect(sh(wt, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(created.branch);
 });
 
+test('topic.sync : ne pousse rien avant la première PR, repousse (force-with-lease) une fois l’amont pris', async () => {
+  const { origin, clone, ws } = await setup();
+  const created = (
+    await t.d.app.inject({
+      method: 'POST',
+      url: '/api/topics',
+      headers: t.headers,
+      payload: { workspaceId: ws.id, title: 'Push après rebase', type: 'feat' },
+    })
+  ).json<{ actionId: string; slug: string; branch: string }>();
+  await finished(created.actionId);
+  const wt = join(ws.worktreesDir, created.slug);
+  const topicId = (await state()).topics[0]?.id;
+  if (!topicId) throw new Error('sujet manquant');
+
+  commitFile(clone, 'depuis-origin.md', 'plus tard\n');
+  sh(clone, 'push', '-q', 'origin', 'main');
+  commitFile(wt, 'depuis-le-sujet.md', 'en cours\n');
+
+  // `--no-track` (topic-create.sh) : pas d'amont tant que topic.pr n'a pas poussé une
+  // première fois. Rien à synchroniser côté origin, donc le sync ne pousse rien.
+  let sync = await syncAction(topicId, 'topic.sync');
+  await finished(sync.json<{ actionId: string }>().actionId);
+  expect(() => sh(origin, 'rev-parse', created.branch)).toThrow();
+
+  // Simule le premier push de topic.pr (06.6), sans gh : seul topic.sync est sous test ici.
+  sh(wt, 'push', '-u', 'origin', created.branch);
+
+  commitFile(clone, 'depuis-origin-2.md', 'encore plus tard\n');
+  sh(clone, 'push', '-q', 'origin', 'main');
+
+  sync = await syncAction(topicId, 'topic.sync');
+  const fin = await finished(sync.json<{ actionId: string }>().actionId);
+  expect(fin.data.outcome).toBe('succeeded');
+  expect(sh(origin, 'rev-parse', created.branch)).toBe(sh(wt, 'rev-parse', 'HEAD'));
+});
+
 test('topic.sync : worktree manquant, 409', async () => {
   const { ws } = await setup();
   const created = (

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import type { StateSnapshot } from '../src/shared/state.js';
 import { startTestDaemon, waitFor, type TestDaemon } from './helpers/daemon.js';
-import { makeOriginAndClone } from './helpers/git.js';
+import { makeOriginAndClone, sh } from './helpers/git.js';
 
 let t: TestDaemon;
 afterEach(async () => {
@@ -54,7 +54,7 @@ const pr = (topicId: string, payload: Record<string, unknown> = {}) =>
   });
 
 test('topic.pr : ouvre la PR, le sujet passe en review avec son numéro et son url', async () => {
-  const { ws } = await setup();
+  const { origin, ws } = await setup();
   const created = (
     await t.d.app.inject({
       method: 'POST',
@@ -62,10 +62,11 @@ test('topic.pr : ouvre la PR, le sujet passe en review avec son numéro et son u
       headers: t.headers,
       payload: { workspaceId: ws.id, title: 'PR', type: 'feat' },
     })
-  ).json<{ actionId: string }>();
+  ).json<{ actionId: string; slug: string; branch: string }>();
   await finished(created.actionId);
   const topicId = (await state()).topics[0]?.id;
   if (!topicId) throw new Error('sujet manquant');
+  const wt = join(ws.worktreesDir, created.slug);
 
   process.env.FAKE_GH_PR_NUMBER = '42';
   process.env.FAKE_GH_PR_URL = 'https://github.com/test/test/pull/42';
@@ -77,6 +78,9 @@ test('topic.pr : ouvre la PR, le sujet passe en review avec son numéro et son u
   expect((await state()).topics).toMatchObject([
     { state: 'review', prNumber: 42, prUrl: 'https://github.com/test/test/pull/42' },
   ]);
+  // `--no-track` (topic-create.sh) laisse la branche sans amont : sans ce push, `gh pr
+  // create` échouerait réellement (« no commits between », vu seulement avec un vrai gh).
+  expect(sh(origin, 'rev-parse', created.branch)).toBe(sh(wt, 'rev-parse', 'HEAD'));
 });
 
 test('topic.pr : gh non authentifié, needs_human', async () => {
