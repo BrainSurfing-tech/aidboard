@@ -18,7 +18,12 @@ const TWO_MIN = 2 * 60_000;
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
 
 // Actions d'un sujet connues en v0.1 et au chantier 06
-export const TOPIC_ACTIONS = ['topic.cleanup', 'editor.open', 'topic.setup-ignorer'] as const;
+export const TOPIC_ACTIONS = [
+  'topic.cleanup',
+  'editor.open',
+  'topic.setup-ignorer',
+  'topic.sync',
+] as const;
 
 const CreateBody = Type.Object(
   {
@@ -197,6 +202,25 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         deps.db.prepare('DELETE FROM topics WHERE id = ?').run(id);
       })();
       return reply.code(204).send();
+    }
+
+    if (actionId === 'topic.sync') {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.sync',
+        script: join(scripts, 'topic-sync.sh'),
+        cwd: topic.worktree,
+        timeoutMs: FIVE_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_REPO_ROOT: ws.root,
+          AID_BRANCH: topic.branch,
+          AID_BASE: topic.base,
+          AID_WORKTREE: topic.worktree,
+        }),
+      });
+      return reply.code(202).send({ actionId: runId });
     }
 
     const body = (req.body ?? {}) as { confirmUnmerged?: number };
