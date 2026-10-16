@@ -35,7 +35,10 @@ function Propositions({ namespace, topicSlug }: { namespace: string; topicSlug: 
     return () => {
       cancelled = true;
     };
-  }, [call, namespace, topicSlug, state]);
+    // `call` change d'identité à chaque rendu (useAid le reconstruit à chaque fois) : le suivre
+    // ici redéclencherait la lecture à l'infini (nouvel objet retourné à chaque fetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namespace, topicSlug, state]);
 
   async function decide(id: string, decision: 'apply' | 'reject') {
     setBusy(id);
@@ -118,8 +121,11 @@ export function Memoire({ namespace, topicSlug }: { namespace: string; topicSlug
       cancelled = true;
     };
     // `state` change à chaque événement daemon (DM4) : on relit la mémoire avec, sans filtrer sur
-    // memory.page précisément — un GET de plus par événement est sans conséquence.
-  }, [call, namespace, topicSlug, state]);
+    // memory.page précisément — un GET de plus par événement est sans conséquence. `call` change
+    // d'identité à chaque rendu (useAid le reconstruit à chaque fois) : le suivre ici
+    // redéclencherait la lecture à l'infini (nouvel objet retourné à chaque fetch).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namespace, topicSlug, state]);
 
   const page = pages?.[selected];
 
