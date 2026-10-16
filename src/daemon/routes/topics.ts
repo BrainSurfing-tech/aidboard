@@ -28,6 +28,7 @@ export const TOPIC_ACTIONS = [
   'topic.test',
   'topic.pr',
   'pr.rafraichir',
+  'topic.merge',
 ] as const;
 
 const CreateBody = Type.Object(
@@ -297,6 +298,75 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         env: scriptEnv(process.env, deps.config.env.strip, {
           AID_PR_NUMBER: String(topic.pr_number),
         }),
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'topic.merge') {
+      if (topic.pr_number == null) throw new AidHttpError(409, 'aucune PR ouverte pour ce sujet');
+      // gh peut réussir côté GitHub avant que le script ne confirme (coupure réseau après
+      // l'appel) : un second topic.merge sur un sujet déjà fusionné n'est pas une erreur
+      // bloquante, juste un 409 propre plutôt qu'une tentative de refusion.
+      if (topic.state === 'merged') {
+        throw new AidHttpError(409, 'ce sujet est déjà fusionné');
+      }
+      const mergeBody = (req.body ?? {}) as {
+        strategy?: 'squash' | 'merge' | 'rebase';
+        message?: string;
+        deleteBranch?: boolean;
+        cleanupAfter?: boolean;
+      };
+      if (!mergeBody.strategy) throw new AidHttpError(422, 'stratégie de fusion requise');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.merge',
+        script: join(scripts, 'topic-merge.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_PR_NUMBER: String(topic.pr_number),
+          AID_MERGE_STRATEGY: mergeBody.strategy,
+          ...(mergeBody.message && { AID_MERGE_MESSAGE: mergeBody.message }),
+          ...(mergeBody.deleteBranch && { AID_MERGE_DELETE_BRANCH: '1' }),
+        }),
+        afterSuccess: () => {
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.state',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { state: 'merged' },
+          });
+          if (mergeBody.cleanupAfter) {
+            startAction(deps.actions, {
+              workspaceId: ws.id,
+              topicId: id,
+              action: 'topic.cleanup',
+              script: join(scripts, 'topic-cleanup.sh'),
+              cwd: existsSync(topic.worktree) ? topic.worktree : ws.root,
+              timeoutMs: TWO_MIN,
+              env: scriptEnv(process.env, deps.config.env.strip, {
+                AID_REPO_ROOT: ws.root,
+                AID_TOPIC: id,
+                AID_SLUG: topic.worktree.split('/').at(-1) ?? '',
+                AID_BRANCH: topic.branch,
+                AID_BASE: topic.base,
+                AID_WORKTREE: topic.worktree,
+                AID_CODEGRAPH_BIN: deps.codegraphBin,
+              }),
+              afterSuccess: () => {
+                deps.actions.store.append({
+                  source: 'daemon',
+                  type: 'topic.state',
+                  workspaceId: ws.id,
+                  topicId: id,
+                  data: { state: 'archived' },
+                });
+              },
+            });
+          }
+        },
       });
       return reply.code(202).send({ actionId: runId });
     }
