@@ -1,0 +1,3 @@
+ALTER TABLE topics ADD COLUMN pr_number INTEGER;
+ALTER TABLE topics ADD COLUMN pr_url TEXT;
+ALTER TABLE topics ADD COLUMN stash_ref TEXT;

@@ -173,7 +173,7 @@ test('token de run : POST /api/events pour un autre runId refusé, pour le sien 
     "INSERT INTO workspaces (id, name, root, base_branch, worktrees_dir, created_at) VALUES ('ws_1','a','/a','main','/w','t')",
   ).run();
   db.prepare(
-    "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s','active',NULL,'disabled','t','t')",
+    "INSERT INTO topics VALUES ('tp_1','ws_1','s','T','feat','feat/s','main','/w/s','active',NULL,'disabled','t','t',NULL,NULL,NULL)",
   ).run();
   db.prepare("INSERT INTO runs VALUES ('run_1','tp_1','standard','open','t')").run();
   const sien = await app.inject({

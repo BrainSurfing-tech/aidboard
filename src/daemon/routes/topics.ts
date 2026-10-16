@@ -26,6 +26,7 @@ export const TOPIC_ACTIONS = [
   'topic.sync-continuer',
   'topic.sync-annuler',
   'topic.test',
+  'topic.pr',
 ] as const;
 
 const CreateBody = Type.Object(
@@ -108,7 +109,9 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         data: { state: 'draft', indexState: indexed ? 'indexing' : 'disabled' },
       },
       (tx) => {
-        tx.prepare('INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)').run(
+        tx.prepare(
+          'INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL)',
+        ).run(
           topicId,
           ws.id,
           slug,
@@ -244,6 +247,38 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps):
         cwd: topic.worktree,
         timeoutMs: FIVE_MIN,
         env: scriptEnv(process.env, deps.config.env.strip, {}),
+      });
+      return reply.code(202).send({ actionId: runId });
+    }
+
+    if (actionId === 'topic.pr') {
+      if (!existsSync(topic.worktree)) throw new AidHttpError(409, 'worktree introuvable');
+      const prBody = (req.body ?? {}) as { title?: string; body?: string };
+      if (!prBody.title) throw new AidHttpError(422, 'titre de PR requis');
+      const { actionId: runId } = startAction(deps.actions, {
+        workspaceId: ws.id,
+        topicId: id,
+        action: 'topic.pr',
+        script: join(scripts, 'topic-pr.sh'),
+        cwd: topic.worktree,
+        timeoutMs: TWO_MIN,
+        env: scriptEnv(process.env, deps.config.env.strip, {
+          AID_BRANCH: topic.branch,
+          AID_BASE: topic.base,
+          AID_PR_TITLE: prBody.title,
+          AID_PR_BODY: prBody.body ?? '',
+        }),
+        afterSuccess: (out) => {
+          const prNumber = typeof out.result.number === 'number' ? out.result.number : null;
+          const prUrl = typeof out.result.url === 'string' ? out.result.url : null;
+          deps.actions.store.append({
+            source: 'daemon',
+            type: 'topic.pr',
+            workspaceId: ws.id,
+            topicId: id,
+            data: { prNumber, prUrl },
+          });
+        },
       });
       return reply.code(202).send({ actionId: runId });
     }

@@ -76,6 +76,8 @@ export interface Topic {
   phase: Phase | null;
   indexState: IndexState;
   worktreeMissing: boolean;
+  prNumber: number | null;
+  prUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }

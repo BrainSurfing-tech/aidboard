@@ -50,6 +50,8 @@ export const topic = (over: Partial<Topic> = {}): Topic => ({
   phase: null,
   indexState: 'disabled',
   worktreeMissing: false,
+  prNumber: null,
+  prUrl: null,
   createdAt: '2026-10-15T10:00:00.000Z',
   updatedAt: new Date().toISOString(),
   ...over,

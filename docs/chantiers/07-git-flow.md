@@ -122,7 +122,7 @@ Hors périmètre, confirmé par le README (§1) et non remis en cause ici : enti
   autre chose que `npm test` — pas de couche de config par workspace pour un seul
   réglage sans second cas d'usage connu. Révisable sans migration de schéma le jour où
   un deuxième projet a besoin d'une autre commande.
-- **`Topic.prUrl` et le numéro de PR.** Migration `003_topic_pr.sql` :
+- **`Topic.prUrl` et le numéro de PR.** Migration `008_topic_pr.sql` :
   `ALTER TABLE topics ADD COLUMN pr_number INTEGER; ALTER TABLE topics ADD COLUMN pr_url
   TEXT; ALTER TABLE topics ADD COLUMN stash_ref TEXT;`. `pr_number`/`pr_url` sont écrits
   par l'`afterSuccess` de `topic.pr` (lu dans la sortie `::aid::` du script) et effacés à
@@ -225,7 +225,7 @@ Vérification : `npm run gate`.
 
 ### 07.6 — Ouvrir la PR (écran 2.5)
 
-Fichiers : `migrations/003_topic_pr.sql` (nouveau, D « `Topic.prUrl` »),
+Fichiers : `migrations/008_topic_pr.sql` (nouveau, D « `Topic.prUrl` »),
 `src/shared/model.ts` (`Topic.prNumber`, `Topic.prUrl`), `src/daemon/state/snapshot.ts`,
 `scripts/git/topic-pr.sh` (nouveau), `src/daemon/routes/topics.ts` (action `topic.pr`),
 `test/topic-pr.test.ts`.

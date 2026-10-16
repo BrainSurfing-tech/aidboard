@@ -37,6 +37,8 @@ export function buildSnapshot(db: Db, all = false): StateSnapshot {
     phase: r.phase as Topic['phase'],
     indexState: r.index_state as Topic['indexState'],
     worktreeMissing: !existsSync(r.worktree as string),
+    prNumber: r.pr_number as number | null,
+    prUrl: r.pr_url as string | null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   }));
