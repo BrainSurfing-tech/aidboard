@@ -36,6 +36,9 @@ interface CodegraphStatus {
   languages?: string[];
   pendingChanges?: { added?: number; modified?: number; removed?: number };
   index?: { builtWithVersion?: string };
+  // Présent (souvent `null`) sur le `status -j` réel : forme exacte non documentée par
+  // codegraph, donc traité par simple troncature de vérité plutôt que parsé en détail.
+  worktreeMismatch?: unknown;
 }
 interface CodegraphCallers {
   callers: CodegraphNode[];
@@ -95,7 +98,12 @@ export class CodegraphIndex implements StructuralIndex {
     const pending = (pc?.added ?? 0) + (pc?.modified ?? 0) + (pc?.removed ?? 0);
     return {
       engine: 'codegraph',
-      state: pending > 0 ? 'stale' : 'ready',
+      // Piège du chantier 08 : `worktreeMismatch` signale un index copié d'un autre chemin —
+      // on le rend `stale` avec un motif, jamais `ready` à tort, et jamais un reindex d'office.
+      state: parsed.worktreeMismatch || pending > 0 ? 'stale' : 'ready',
+      ...(parsed.worktreeMismatch
+        ? { reason: this.worktreeMismatchReason(parsed.worktreeMismatch) }
+        : {}),
       indexedAt: parsed.lastIndexed ?? null,
       files: parsed.fileCount ?? 0,
       symbols: parsed.nodeCount ?? 0,
@@ -105,6 +113,11 @@ export class CodegraphIndex implements StructuralIndex {
       builtWith: parsed.index?.builtWithVersion ?? null,
       capabilities: CAPABILITIES,
     };
+  }
+
+  private worktreeMismatchReason(mismatch: unknown): string {
+    const detail = typeof mismatch === 'string' ? mismatch : 'reindex conseillé';
+    return `index copié depuis un autre chemin (worktreeMismatch) : ${detail}`;
   }
 
   async explore(

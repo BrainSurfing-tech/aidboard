@@ -56,6 +56,36 @@ test('status avec des changements en attente : stale', async () => {
   expect(status.pending).toBe(3);
 });
 
+test('worktreeMismatch non nul : stale avec reason, jamais ready à tort', async () => {
+  const dir = tmp();
+  process.env.FAKE_CODEGRAPH_FIXTURES = dir;
+  writeFileSync(
+    join(dir, 'status.json'),
+    JSON.stringify({
+      initialized: true,
+      version: '1.6.2',
+      lastIndexed: '2026-10-17T08:00:00.000Z',
+      fileCount: 1,
+      nodeCount: 1,
+      languages: ['typescript'],
+      pendingChanges: { added: 0, modified: 0, removed: 0 },
+      index: { builtWithVersion: '1.6.2' },
+      worktreeMismatch: '/autre/chemin',
+    }),
+  );
+  const status = await new CodegraphIndex(FAKE).status(tmp());
+  expect(status.state).toBe('stale');
+  expect(status.reason).toContain('worktreeMismatch');
+  expect(status.reason).toContain('/autre/chemin');
+});
+
+test('worktreeMismatch null (cas normal) : ready sans reason', async () => {
+  process.env.FAKE_CODEGRAPH_FIXTURES = FIXTURES;
+  const status = await new CodegraphIndex(FAKE).status(tmp());
+  expect(status.state).toBe('ready');
+  expect(status.reason).toBeUndefined();
+});
+
 test('binaire introuvable : unavailable avec motif', async () => {
   const status = await new CodegraphIndex('/chemin/inexistant/codegraph').status(tmp());
   expect(status.state).toBe('unavailable');

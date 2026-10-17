@@ -22,7 +22,7 @@ export interface Relation {
 export interface IndexStatus {
   engine: IndexEngine;
   state: 'ready' | 'indexing' | 'stale' | 'unavailable';
-  /** présent seulement quand state === 'unavailable' */
+  /** présent quand state === 'unavailable', ou state === 'stale' par worktreeMismatch */
   reason?: string;
   indexedAt: string | null;
   files: number;
