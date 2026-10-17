@@ -14,6 +14,7 @@ export interface StructuralServiceOpts {
   engine: IndexEngine;
   bin?: string;
   timeoutMs?: number;
+  exclude?: string[];
 }
 
 // DS7 : comme gitLiveInfo pour git, l'état n'est jamais stocké — juste mis en cache 30 s par
@@ -49,7 +50,7 @@ export class StructuralService {
       this.binPath = null;
     } else {
       this.binPath = opts.bin ?? 'codegraph';
-      this.impl = new CodegraphIndex(this.binPath, opts.timeoutMs);
+      this.impl = new CodegraphIndex(this.binPath, opts.timeoutMs, opts.exclude);
     }
   }
 

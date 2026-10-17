@@ -51,6 +51,14 @@ function toSymbol(n: CodegraphNode): SymbolRef {
   return { name: n.name, kind: n.kind, file: n.filePath, line: n.startLine };
 }
 
+// DO2 (chantier 08) : aucune sous-commande codegraph ne lit de liste d'exclusion (vérifié sur
+// `--help` de query/callers/impact/affected/explore) — le contrat prévoit que l'adaptateur la
+// fasse respecter comme il peut, donc en filtrant les résultats après coup. Une entrée ("dist")
+// exclut tout fichier dont un segment de chemin la matche exactement.
+export function isExcluded(file: string, exclude: readonly string[]): boolean {
+  return exclude.length > 0 && file.split('/').some((segment) => exclude.includes(segment));
+}
+
 // `status` est la seule sous-commande de codegraph dont le chemin est positionnel : toutes les
 // autres (query/callers/impact/affected/explore) prennent -p/--path. Vérifié directement sur
 // le CLI installé (codegraph <cmd> --help), pas une supposition du plan.
@@ -60,6 +68,7 @@ export class CodegraphIndex implements StructuralIndex {
   constructor(
     private readonly bin: string,
     private readonly timeoutMs = 60_000,
+    private readonly exclude: readonly string[] = [],
   ) {}
 
   detect(root: string): boolean {
@@ -121,7 +130,7 @@ export class CodegraphIndex implements StructuralIndex {
     const r = await run(this.bin, args, { cwd: root, timeoutMs: this.timeoutMs });
     if (!r.ok) throw new StructuralUnavailable(this.reasonFor(r));
     const hits = this.parseJson<CodegraphQueryHit[]>(r.stdout);
-    return hits.map((hit) => toSymbol(hit.node));
+    return hits.map((hit) => toSymbol(hit.node)).filter((s) => !isExcluded(s.file, this.exclude));
   }
 
   async callers(root: string, symbol: string, limit = 20): Promise<Relation[]> {
@@ -134,12 +143,9 @@ export class CodegraphIndex implements StructuralIndex {
     // codegraph ne rend que le nom du symbole visé par `callers`, jamais sa position réelle :
     // `to` reste volontairement partiel (kind/file/line inconnus) plutôt que fabriqués.
     const to: SymbolRef = { name: symbol, kind: 'unknown', file: '', line: 0 };
-    return parsed.callers.map((c) => ({
-      from: toSymbol(c),
-      to,
-      kind: 'calls',
-      provenance: PROVENANCE,
-    }));
+    return parsed.callers
+      .map((c) => ({ from: toSymbol(c), to, kind: 'calls' as const, provenance: PROVENANCE }))
+      .filter((rel) => !isExcluded(rel.from.file, this.exclude));
   }
 
   async impact(
@@ -153,7 +159,8 @@ export class CodegraphIndex implements StructuralIndex {
     });
     if (!r.ok) throw new StructuralUnavailable(this.reasonFor(r));
     const parsed = this.parseJson<CodegraphImpact>(r.stdout);
-    return { affected: parsed.affected.map(toSymbol), provenance: PROVENANCE };
+    const affected = parsed.affected.map(toSymbol).filter((s) => !isExcluded(s.file, this.exclude));
+    return { affected, provenance: PROVENANCE };
   }
 
   async affected(root: string, files: string[]): Promise<{ tests: string[] }> {
@@ -164,7 +171,7 @@ export class CodegraphIndex implements StructuralIndex {
     });
     if (!r.ok) throw new StructuralUnavailable(this.reasonFor(r));
     const parsed = this.parseJson<CodegraphAffected>(r.stdout);
-    return { tests: parsed.affectedTests };
+    return { tests: parsed.affectedTests.filter((f) => !isExcluded(f, this.exclude)) };
   }
 
   private unavailable(reason: string): IndexStatus {

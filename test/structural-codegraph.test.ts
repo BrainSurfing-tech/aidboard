@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
-import { CodegraphIndex } from '../src/daemon/structural/codegraph.js';
+import { CodegraphIndex, isExcluded } from '../src/daemon/structural/codegraph.js';
 import { StructuralUnavailable } from '../src/shared/structural.js';
 
 const FAKE = join(import.meta.dirname, 'fixtures/fake-codegraph.sh');
@@ -117,4 +117,67 @@ test('symbols et affected lisent les fixtures JSON', async () => {
 test('explore rend un texte, jamais parsé en JSON', async () => {
   const { text } = await new CodegraphIndex(FAKE).explore(tmp(), 'useExample');
   expect(text).toContain('Exploration');
+});
+
+test('isExcluded : un segment de chemin exact, jamais une sous-chaîne', () => {
+  expect(isExcluded('apps/api/dist/index.js', ['dist'])).toBe(true);
+  expect(isExcluded('src/distillery.ts', ['dist'])).toBe(false);
+  expect(isExcluded('src/example.ts', [])).toBe(false);
+});
+
+test('DO2 : symbols, callers, impact et affected filtrent les fichiers sous dist/', async () => {
+  const dir = tmp();
+  process.env.FAKE_CODEGRAPH_FIXTURES = dir;
+  writeFileSync(
+    join(dir, 'query.json'),
+    JSON.stringify([
+      { node: { name: 'useExample', kind: 'function', filePath: 'src/example.ts', startLine: 10 } },
+      {
+        node: { name: 'build', kind: 'function', filePath: 'apps/api/dist/index.js', startLine: 1 },
+      },
+    ]),
+  );
+  writeFileSync(
+    join(dir, 'callers.json'),
+    JSON.stringify({
+      callers: [
+        {
+          name: 'ExampleClient',
+          kind: 'function',
+          filePath: 'src/example-client.tsx',
+          startLine: 5,
+        },
+        { name: 'legacy', kind: 'function', filePath: 'apps/api/dist/legacy.js', startLine: 1 },
+      ],
+    }),
+  );
+  writeFileSync(
+    join(dir, 'impact.json'),
+    JSON.stringify({
+      affected: [
+        { name: 'useExample', kind: 'function', filePath: 'src/example.ts', startLine: 10 },
+        { name: 'build', kind: 'function', filePath: 'apps/api/dist/index.js', startLine: 1 },
+      ],
+    }),
+  );
+  writeFileSync(
+    join(dir, 'affected.json'),
+    JSON.stringify({
+      affectedTests: ['src/example.test.ts', 'apps/api/dist/legacy.test.js'],
+    }),
+  );
+
+  const engine = new CodegraphIndex(FAKE, undefined, ['dist']);
+  expect(await engine.symbols(tmp(), 'x')).toEqual([
+    { name: 'useExample', kind: 'function', file: 'src/example.ts', line: 10 },
+  ]);
+  const callers = await engine.callers(tmp(), 'useExample');
+  expect(callers).toHaveLength(1);
+  expect(callers[0]!.from.file).toBe('src/example-client.tsx');
+  const { affected } = await engine.impact(tmp(), 'useExample');
+  expect(affected).toEqual([
+    { name: 'useExample', kind: 'function', file: 'src/example.ts', line: 10 },
+  ]);
+  const { tests } = await engine.affected(tmp(), ['src/example.ts']);
+  expect(tests).toEqual(['src/example.test.ts']);
 });

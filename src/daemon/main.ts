@@ -185,6 +185,7 @@ export async function startDaemon(
       engine: opts.structuralEngine ?? config.structural.engine,
       bin: opts.codegraphBin ?? config.structural.bin,
       timeoutMs: config.structural.timeoutMs,
+      exclude: config.structural.exclude,
     });
     const app = await buildServer({
       config,

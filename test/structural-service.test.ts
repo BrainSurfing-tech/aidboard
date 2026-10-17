@@ -43,6 +43,19 @@ test('engine codegraph : expose le binaire configuré', () => {
   expect(service.bin).toBe(FAKE);
 });
 
+test('DO2 : exclude est transmis à l’adaptateur, pas seulement accepté par le service', async () => {
+  const dir = tmp();
+  process.env.FAKE_CODEGRAPH_FIXTURES = dir;
+  writeFileSync(
+    join(dir, 'query.json'),
+    JSON.stringify([
+      { node: { name: 'build', kind: 'function', filePath: 'dist/index.js', startLine: 1 } },
+    ]),
+  );
+  const service = new StructuralService({ engine: 'codegraph', bin: FAKE, exclude: ['dist'] });
+  expect(await service.symbols(dir, 'build')).toEqual([]);
+});
+
 test('status est mis en cache 30 s par chemin (DS7)', async () => {
   const service = new StructuralService({ engine: 'codegraph', bin: FAKE });
   const dir = tmp();

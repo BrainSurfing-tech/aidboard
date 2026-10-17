@@ -207,7 +207,7 @@ const DEFAULT_FILE = `# Configuration d'A-I-D. Tout est facultatif : ce sont les
 #   engine: codegraph      # off = aucune lecture structurelle, les sujets restent "disabled"
 #   bin: codegraph         # chemin ou nom du binaire codegraph
 #   timeoutMs: 60000
-#   exclude: []            # dossiers à exclure (dist, …) — pas encore lu par l'adaptateur
+#   exclude: []            # dossiers à exclure des résultats (dist, …) — ex. ["dist"]
 `;
 
 export function writeDefaultConfigIfAbsent(p: AidPaths): void {
