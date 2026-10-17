@@ -25,6 +25,7 @@ import { registerAgentRoutes } from './routes/agents.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
 import { registerMemoryRoutes } from './routes/memory.js';
+import { registerStructuralRoutes } from './routes/structural.js';
 import type { MemoryProposals } from './memory/maintain.js';
 import type { MemoryService } from './memory/service.js';
 import { type AuthState, registerSecurity } from './security.js';
@@ -127,6 +128,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     actions: { store: deps.store, paths: deps.paths, queue: new WorkspaceQueue() },
     indexer,
   });
+  registerStructuralRoutes(app, { db: deps.db, engine: structural, store: deps.store, indexer });
   registerEventRoutes(app, deps.db, deps.store);
   if (deps.memory) {
     registerMemoryRoutes(app, {
