@@ -36,7 +36,10 @@ export async function startTestDaemon(
   const d = await startDaemon({
     home,
     codegraphBin: extra.codegraphBin,
-    structuralEngine: extra.structuralEngine,
+    // Piège du chantier 08 : jamais le vrai codegraph en test. Depuis 08.6, /api/state
+    // interroge le moteur pour chaque sujet (DS7) ; un test qui ne précise ni l'un ni
+    // l'autre hériterait sinon du moteur réel de config.structural (installé sur ce poste).
+    structuralEngine: extra.structuralEngine ?? (extra.codegraphBin ? undefined : 'off'),
     memory: extra.memory,
     config: { port: 0, ...extra.config },
     checkUpdates: false,
