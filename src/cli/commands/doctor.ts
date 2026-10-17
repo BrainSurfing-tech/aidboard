@@ -111,6 +111,18 @@ export async function runChecks(p: Probes): Promise<Check[]> {
     });
   }
 
+  // Présence seule déjà couverte par la boucle ci-dessus (warn si absent) : ici, la version,
+  // pour repérer d'un coup d'œil un décalage avec l'index déjà bâti sur un dépôt (chantier 08).
+  if (p.has('codegraph')) {
+    const v = await p.version('codegraph', ['--version']);
+    verify(v !== null, `codegraph ${v}`, {
+      level: 'warn',
+      label: 'codegraph : version illisible',
+      detail:
+        '`codegraph --version` a échoué : impossible de repérer un décalage avec un index déjà bâti',
+    });
+  }
+
   const mode = p.homeMode();
   if (mode !== null) {
     const perms = mode & 0o777;

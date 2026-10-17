@@ -86,6 +86,26 @@ test('gh absent : pas de vérification de session (rien à authentifier)', async
   expect(checks.some((l) => l.includes('authentifié'))).toBe(false);
 });
 
+test('codegraph présent : sa version s’affiche', async () => {
+  const checks = await levels({
+    version: async (bin) => (bin === 'codegraph' ? 'codegraph 1.6.2' : 'git version 2.54.0'),
+  });
+  expect(checks).toContain('ok:codegraph codegraph 1.6.2');
+});
+
+test('codegraph présent mais --version échoue : ⚠ distinct de l’absence du binaire', async () => {
+  const checks = await levels({
+    version: async (bin) => (bin === 'codegraph' ? null : 'git version 2.54.0'),
+  });
+  expect(checks).toContain('warn:codegraph : version illisible');
+  expect(checks.some((l) => l === 'warn:codegraph introuvable')).toBe(false);
+});
+
+test('codegraph absent : pas de vérification de version (rien à sonder)', async () => {
+  const checks = await levels({ has: (b) => b !== 'codegraph' });
+  expect(checks.some((l) => l.includes('illisible'))).toBe(false);
+});
+
 test('~/.aid autre que 0700 : ✗ ; absent : rien à dire', async () => {
   expect(await levels({ homeMode: () => 0o40755 })).toContain('ko:~/.aid en 755');
   expect((await levels({ homeMode: () => null })).some((l) => l.includes('~/.aid'))).toBe(false);

@@ -178,11 +178,13 @@ export async function startDaemon(
       opts.checkUpdates === false
         ? null
         : new UpdateWatcher(dirname(fileURLToPath(import.meta.url)));
-    // config.structural n'existe pas encore (chantier 08.3) : codegraphBin/structuralEngine
-    // restent des options directes de startDaemon, comme codegraphBin le fait déjà aujourd'hui.
+    // config.structural est la source par défaut (08.3) ; codegraphBin/structuralEngine
+    // restent des surcharges directes de startDaemon pour les tests (comme codegraphBin
+    // le faisait déjà avant que la clé de config existe).
     const structural = new StructuralService({
-      engine: opts.structuralEngine ?? 'codegraph',
-      bin: opts.codegraphBin ?? 'codegraph',
+      engine: opts.structuralEngine ?? config.structural.engine,
+      bin: opts.codegraphBin ?? config.structural.bin,
+      timeoutMs: config.structural.timeoutMs,
     });
     const app = await buildServer({
       config,
