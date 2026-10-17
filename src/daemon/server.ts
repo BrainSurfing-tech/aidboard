@@ -14,6 +14,7 @@ import { AidHttpError } from './errors.js';
 import type { AidPaths } from './paths.js';
 import type { UpdateStatus } from './updateCheck.js';
 import { WorkspaceQueue } from './actions/queue.js';
+import { StructuralService } from './structural/service.js';
 import { Indexer } from './topics/index.js';
 import { registerTopicRoutes } from './routes/topics.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
@@ -40,7 +41,7 @@ export interface ServerDeps {
   memoryProposals?: MemoryProposals;
   paths: AidPaths;
   procVersion?: () => string | null;
-  codegraphBin?: string;
+  structural?: StructuralService;
   requestStop?: () => void;
   requestUpdate?: () => void;
   updates?: () => UpdateStatus | null;
@@ -108,20 +109,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     requestUpdate: deps.requestUpdate,
     updates: deps.updates,
   });
+  const structural = deps.structural ?? new StructuralService({ engine: 'codegraph' });
   registerAgentRoutes(app, { db: deps.db, agents: deps.agents });
-  registerWorkspaceRoutes(app, deps);
+  registerWorkspaceRoutes(app, { ...deps, engine: structural });
   registerFsRoutes(app);
   registerHookRoutes(app, () => process.env);
   const indexer = new Indexer({
     store: deps.store,
     paths: deps.paths,
-    codegraphBin: deps.codegraphBin ?? 'codegraph',
+    engine: structural,
   });
   app.addHook('onClose', async () => indexer.stop());
   registerTopicRoutes(app, {
     db: deps.db,
     config: deps.config,
-    codegraphBin: deps.codegraphBin ?? 'codegraph',
+    engine: structural,
     actions: { store: deps.store, paths: deps.paths, queue: new WorkspaceQueue() },
     indexer,
   });
