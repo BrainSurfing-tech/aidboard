@@ -159,7 +159,15 @@ async function main(): Promise<number> {
       // Ouverture d'AID.app avec un daemon déjà présent : interrompt proprement les agents vivants
       // (résumé écrit avant l'arrêt, repris au prochain démarrage via resumeFromManifest), met à
       // jour si un nouveau commit est dispo, puis relance toujours — même sans rien de nouveau.
+      // `cycling` : un second déclenchement pendant qu'un cycle est déjà en cours (double-clic sur
+      // AID.app avant que le premier ait fini) lancerait un second spawnRespawnWatcher sur CE pid —
+      // les deux relances se battraient alors pour le même port, et l'une des deux reste vivante
+      // sans jamais réussir à écouter (constaté le 2026-10-19). Sans réinitialisation : ce process
+      // s'arrête de toute façon dans le cycle qui s'exécute.
+      let cycling = false;
       cycleRequested = () => {
+        if (cycling) return;
+        cycling = true;
         void (async () => {
           const { gracefulInterrupt } = await import('../daemon/pty/reprise.js');
           const { writeFileSync } = await import('node:fs');

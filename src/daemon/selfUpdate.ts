@@ -76,6 +76,10 @@ export function currentLaunch(): Launch {
  * `launch.entry daemon` avec `launch.execPath` — jamais `process.execPath` implicite : après
  * une mise à jour en mode release, c'est le Node de la nouvelle archive qu'il faut (DR8). Doit survivre à l'exit du process qui l'a lancé — c'est ce qui permet au
  * daemon de repartir tout seul après s'être arrêté pour charger le nouveau build.
+ *
+ * stdout/stderr du daemon relancé vont dans `home/daemon.log`, comme `spawnDetachedDaemon`
+ * (start.ts) pour le tout premier lancement — sans ça, un crash au redémarrage (port déjà
+ * pris par un cycle concurrent, etc.) ne laisse aucune trace.
  */
 export function spawnRespawnWatcher(pid: number, launch: Launch, home: string): void {
   const code = `
@@ -87,12 +91,15 @@ export function spawnRespawnWatcher(pid: number, launch: Launch, home: string): 
       Atomics.wait(ia, 0, 0, 150);
     }
     const { spawn } = require('node:child_process');
+    const { openSync, closeSync } = require('node:fs');
+    const log = openSync(${JSON.stringify(home)} + '/daemon.log', 'a', 0o600);
     const child = spawn(${JSON.stringify(launch.execPath)}, [${JSON.stringify(launch.entry)}, 'daemon'], {
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', log, log],
       env: Object.assign({}, process.env, { AID_HOME: ${JSON.stringify(home)} }),
     });
     child.unref();
+    closeSync(log);
   `;
   const watcher = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
   watcher.unref();
