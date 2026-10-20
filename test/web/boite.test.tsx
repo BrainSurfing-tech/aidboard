@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useLocation } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Agent, MeshDm, MeshState } from '../../src/shared/model.js';
 import { Boite } from '../../web/src/ecrans/Boite.js';
@@ -291,4 +291,58 @@ test('sans mesh configuré : ni section ni pastille', async () => {
   await screen.findByText('Autoriser Bash(npm test) ?');
   expect(node('1-2.mesh')).toBeNull();
   expect(node('1-2.barre.mesh')).toBeNull();
+});
+
+// 12.6 : « Ouvrir la cell » — la cell vit ⇒ lien vers son terminal ; sinon choix du sujet, puis POST et navigation
+function Lieu() {
+  const l = useLocation();
+  return <p data-testid="lieu">{`${l.pathname}${l.search}`}</p>;
+}
+
+test('« Ouvrir la cell » : choisir un sujet actif lance swarph-cell et mène à son terminal ; cell vivante ⇒ lien direct', async () => {
+  const base = snapshot({
+    workspaces: [ws()],
+    topics: [
+      topic(),
+      topic({ id: 'tp_arch', branch: 'feat/vieux', slug: 'vieux', state: 'archived' }),
+    ],
+    runs: [run('run_1', 'tp_1')],
+  });
+  const h = setup(
+    <Routes>
+      <Route path="/boite" element={<Boite />} />
+      <Route path="/sujets/:topicId" element={<Lieu />} />
+    </Routes>,
+    {
+      ...base,
+      mesh: { ...meshEtat(), inbox: [dm({ id: 21, kind: 'question', content: 'Dispo ?' })] },
+    },
+    '/boite',
+  );
+  h.respond.set(
+    'POST /api/agents',
+    json(201, { ...agent({ id: 'ag_cell', kind: 'swarph-cell' }) }),
+  );
+  await screen.findByText('Dispo ?');
+  await userEvent.click(node('1-2.mesh.dm-1.cell')!);
+  // seuls les sujets actifs sont proposés
+  expect(text('1-2.mesh.dm-1.cell.sujet-1')).toBe('feat/s');
+  expect(node('1-2.mesh.dm-1.cell.sujet-2')).toBeNull();
+  await userEvent.click(node('1-2.mesh.dm-1.cell.sujet-1')!);
+  expect(h.calls.find((c) => c.url === '/api/agents')?.body).toEqual({
+    topicId: 'tp_1',
+    kind: 'swarph-cell',
+  });
+  await waitFor(() =>
+    expect(screen.getByTestId('lieu').textContent).toBe('/sujets/tp_1?agent=ag_cell'),
+  );
+  cleanup();
+  setup(<Boite />, {
+    ...base,
+    agents: [agent({ id: 'ag_cell', kind: 'swarph-cell', status: 'idle' })],
+    mesh: { ...meshEtat(), inbox: [dm({ id: 21, kind: 'question', content: 'Dispo ?' })] },
+  });
+  await screen.findByText('Dispo ?');
+  expect(node('1-2.mesh.dm-1.cell')?.tagName).toBe('A');
+  expect(node('1-2.mesh.dm-1.cell')?.getAttribute('href')).toBe('/sujets/tp_1?agent=ag_cell');
 });

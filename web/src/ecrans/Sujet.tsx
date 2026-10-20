@@ -53,12 +53,14 @@ const INDEX_LABEL: Record<IndexState, string> = {
 };
 
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
-type Kind = 'claude' | 'codex' | 'shell';
+type Kind = 'claude' | 'codex' | 'shell' | 'swarph-cell';
 const KINDS: Array<{ kind: Kind; label: string }> = [
   { kind: 'claude', label: 'Lancer claude' },
   { kind: 'codex', label: 'Lancer codex' },
   { kind: 'shell', label: 'Ouvrir un shell' },
 ];
+// 12.6 : la cell swarph ne se propose que si `mesh.cell` est configuré (le snapshot porte alors `mesh`)
+const KIND_CELL = { kind: 'swarph-cell' as const, label: 'Ouvrir la cell swarph' };
 
 function Contenu({ topicId }: { topicId: string }) {
   const { state, outputs, daemon, retry, call } = useAid();
@@ -260,6 +262,7 @@ function Contenu({ topicId }: { topicId: string }) {
   const runIds = state.runs.filter((r) => r.topicId === topic.id).map((r) => r.id);
   const agents: Agent[] = state.agents.filter((a) => runIds.includes(a.runId));
   const active = agents.find((a) => a.id === selected) ?? agents.at(-1);
+  const kinds = state.mesh ? [...KINDS, KIND_CELL] : KINDS;
 
   async function launch(kind: Kind) {
     setErreur(null);
@@ -629,7 +632,7 @@ function Contenu({ topicId }: { topicId: string }) {
                     propre dialogue de confiance : c’est normal.
                   </p>
                   <div className="vide-actions">
-                    {KINDS.map(({ kind, label }) => (
+                    {kinds.map(({ kind, label }) => (
                       <button
                         key={kind}
                         className={`bouton${kind === 'claude' ? ' bouton--primaire' : ''}`}
@@ -703,7 +706,7 @@ function Contenu({ topicId }: { topicId: string }) {
                       + Agent
                     </button>
                     {menu === 'agent' &&
-                      KINDS.map(({ kind, label }) => (
+                      kinds.map(({ kind, label }) => (
                         <button
                           key={kind}
                           className="onglet"

@@ -2,10 +2,22 @@ import { accessSync, constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { findAssetDir } from '../assets.js';
 
-export type SpawnKind = 'claude' | 'codex' | 'shell';
+export type SpawnKind = 'claude' | 'codex' | 'shell' | 'swarph-cell';
 
-export function agentCommand(kind: SpawnKind, env: NodeJS.ProcessEnv): string[] {
+/** Ce qu'il faut pour ouvrir la cell swarph (12.6, D38) : le binaire et le fichier de cell, jamais le token. */
+export interface MeshSpawn {
+  bin: string;
+  cellFile: string;
+}
+
+export function agentCommand(kind: SpawnKind, env: NodeJS.ProcessEnv, mesh?: MeshSpawn): string[] {
   if (kind === 'shell') return [env.SHELL || '/bin/bash', '-l'];
+  // `swarph spawn` lance claude lui-même avec le session-id persistant de la cell ; sans starter ni bannière
+  // pour que l'écran soit celui de claude (les hooks AID_HOOK s'appliquent comme à tout claude).
+  if (kind === 'swarph-cell') {
+    if (!mesh) throw new Error('swarph-cell : mesh non configuré');
+    return [mesh.bin, 'spawn', mesh.cellFile, '--no-starter', '--no-banner'];
+  }
   return [kind];
 }
 
@@ -41,6 +53,21 @@ export function agentEnv(
   for (const key of strip) delete env[key];
   for (const key of Object.keys(env)) if (SESSION_MARKERS.test(key)) delete env[key];
   return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', ...aid };
+}
+
+/**
+ * L'environnement propre à la cell swarph (12.6), ajouté à celui de l'agent pour ce kind seulement : ce que swarph
+ * attend (`MESH_GATEWAY_URL`, `SWARPH_STATE`) — des adresses, jamais un token. Vide pour tout autre kind.
+ */
+export function meshEnv(
+  kind: SpawnKind,
+  mesh: { gateway: string; stateRoot: string },
+): Record<string, string> {
+  if (kind !== 'swarph-cell') return {};
+  const env: Record<string, string> = {};
+  if (mesh.gateway) env.MESH_GATEWAY_URL = mesh.gateway;
+  if (mesh.stateRoot) env.SWARPH_STATE = mesh.stateRoot;
+  return env;
 }
 
 /**

@@ -489,3 +489,34 @@ test('un titre ou une branche piégés ne sont jamais du HTML', async () => {
   await screen.findByText('<img src=x onerror=alert(1)>');
   expect(document.querySelector('img')).toBeNull();
 });
+
+test('« Ouvrir la cell swarph » n’apparaît qu’avec un mesh configuré, et lance kind swarph-cell', async () => {
+  const sans = open(snapshot({ workspaces: [ws()], topics: [topic()], runs: [run] }));
+  await screen.findByText('Aucun agent ne tourne sur ce sujet.');
+  expect(screen.queryByText('Ouvrir la cell swarph')).toBeNull();
+  cleanup();
+  await sans.client.stop();
+  const h = open({
+    ...snapshot({ workspaces: [ws()], topics: [topic()], runs: [run] }),
+    mesh: {
+      state: {
+        connected: true,
+        tailscale: 'running',
+        monitor: 'running',
+        pending: 0,
+        since: 't',
+        cell: 'morzu-mac',
+      },
+      inbox: [],
+      tailscaleManage: false,
+    },
+  });
+  h.respond.set('POST /api/agents', json(201, { ...agent({ id: 'ag_c', kind: 'swarph-cell' }) }));
+  await userEvent.click(await screen.findByText('Ouvrir la cell swarph'));
+  await waitFor(() =>
+    expect(h.calls.find((c) => c.url === '/api/agents')?.body).toEqual({
+      topicId: 'tp_1',
+      kind: 'swarph-cell',
+    }),
+  );
+});

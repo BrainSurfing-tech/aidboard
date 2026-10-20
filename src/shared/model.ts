@@ -15,7 +15,15 @@ export interface TopicIndex {
 export type AgentStatus =
   'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'stopped';
 export type AgentKind =
-  'claude' | 'codex' | 'cursor' | 'shell' | 'swairm-drone' | 'swairm-queen' | 'grokbot-cloud';
+  | 'claude'
+  | 'codex'
+  | 'cursor'
+  | 'shell'
+  | 'swairm-drone'
+  | 'swairm-queen'
+  | 'grokbot-cloud'
+  /** la cell swarph du mesh, ouverte en PTY (12.6, D38) */
+  | 'swarph-cell';
 export type ActionState = 'running' | 'succeeded' | 'needs_human' | 'failed';
 export type StatusSource = 'hook' | 'heuristic' | 'daemon';
 export type NeedsInputReason =

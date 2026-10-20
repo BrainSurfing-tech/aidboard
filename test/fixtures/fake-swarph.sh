@@ -46,6 +46,18 @@ if [ "$1" = "monitor" ]; then
       ;;
   esac
 fi
+if [ "$1" = "spawn" ] && [[ " $* " != *" --dry-run "* ]]; then
+  # la cell ouverte en PTY (12.6) : affiche ce que swarph passerait à claude et son environnement
+  # utile, puis attend « quit » sur l'entrée, comme une session
+  echo "FAKE_CELL cell=$2 args=${*:3}"
+  echo "MESH_GATEWAY_URL=${MESH_GATEWAY_URL:-}"
+  echo "SWARPH_STATE=${SWARPH_STATE:-}"
+  echo "SWARPH_SELF=${SWARPH_SELF:-}"
+  while IFS= read -r line; do
+    [ "$line" = "quit" ] && exit 0
+  done
+  exit 0
+fi
 if [ "$1" = "spawn" ]; then
   echo "claude --name $2 --session-id 00000000-0000-4000-8000-000000000000"
   exit 0

@@ -1,5 +1,5 @@
 import { type ReactNode, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import type { Agent, MeshDm, Topic, Workspace } from '../../../src/shared/model.js';
 import type { StateSnapshot } from '../../../src/shared/state.js';
 import { useAid } from '../data/useAidState.js';
@@ -181,10 +181,92 @@ const KIND_LABEL: Record<MeshDm['kind'], string> = {
 };
 
 /**
+ * « Ouvrir la cell » (12.6) : la cell vit déjà ⇒ son terminal ; sinon choisir le sujet actif dans le worktree
+ * duquel elle s'ouvre (une seule session par cell, le daemon refuse la seconde en 409).
+ */
+function OuvrirCell({ n, state }: { n: number; state: StateSnapshot }) {
+  const { call } = useAid();
+  const navigate = useNavigate();
+  const [choix, setChoix] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const id = (rest = '') => `1-2.mesh.dm-${n}.cell${rest ? `.${rest}` : ''}`;
+  const cell = state.agents.find((a) => a.kind === 'swarph-cell' && isAlive(a));
+  if (cell) {
+    const topicId = state.runs.find((r) => r.id === cell.runId)?.topicId ?? '';
+    return (
+      <Link
+        className="lien"
+        data-node={id()}
+        data-action="cell.ouvrir"
+        to={`/sujets/${topicId}?agent=${cell.id}`}
+      >
+        Ouvrir la cell →
+      </Link>
+    );
+  }
+  const actifs = state.topics.filter((t) => t.state === 'active' && !t.worktreeMissing);
+  const lancer = async (topicId: string) => {
+    setBusy(true);
+    setErreur(null);
+    try {
+      const a = await call<Agent>('POST', '/api/agents', { topicId, kind: 'swarph-cell' });
+      navigate(`/sujets/${topicId}?agent=${a.id}`);
+    } catch (err) {
+      setErreur(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button
+        className="bouton"
+        data-node={id()}
+        data-action="cell.ouvrir"
+        type="button"
+        aria-expanded={choix}
+        disabled={busy || actifs.length === 0}
+        title={
+          actifs.length === 0
+            ? 'Aucun sujet actif : la cell s’ouvre dans le worktree d’un sujet'
+            : undefined
+        }
+        onClick={() => setChoix(!choix)}
+      >
+        Ouvrir la cell
+      </button>
+      {choix && (
+        <span className="groupe-filtres" role="group" aria-label="Dans quel sujet ?">
+          {actifs.map((t, i) => (
+            <button
+              key={t.id}
+              className="puce-filtre"
+              data-node={id(`sujet-${i + 1}`)}
+              data-action="cell.lancer"
+              type="button"
+              disabled={busy}
+              onClick={() => void lancer(t.id)}
+            >
+              {t.branch}
+            </button>
+          ))}
+        </span>
+      )}
+      {erreur && (
+        <p className="message-erreur" role="alert" data-node={id('erreur')}>
+          {erreur}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
  * Un DM du mesh (12.5). Le contenu est une donnée d'un pair : rendu en texte brut dans un bloc encadré,
  * jamais interprété (même raison que D30). « Vu » le retire de la Boîte (12.4) ; « Ouvrir la cell » arrive en 12.6.
  */
-function ArticleMesh({ n, dm }: { n: number; dm: MeshDm }) {
+function ArticleMesh({ n, dm, state }: { n: number; dm: MeshDm; state: StateSnapshot }) {
   const { call } = useAid();
   const [busy, setBusy] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -246,6 +328,7 @@ function ArticleMesh({ n, dm }: { n: number; dm: MeshDm }) {
         >
           Vu
         </button>
+        <OuvrirCell n={n} state={state} />
       </div>
       {erreur && (
         <p className="message-erreur" role="alert" data-node={id('erreur')}>
@@ -257,7 +340,8 @@ function ArticleMesh({ n, dm }: { n: number; dm: MeshDm }) {
 }
 
 /** La section Mesh de la Boîte : « À traiter » (question, unblock) puis « Informations » ; les DM vus n'y sont plus. */
-function SectionMesh({ mesh }: { mesh: NonNullable<StateSnapshot['mesh']> }) {
+function SectionMesh({ state }: { state: StateSnapshot }) {
+  const mesh = state.mesh!;
   const nonVus = mesh.inbox.filter((d) => !d.seenAt);
   const groupes = [
     {
@@ -312,7 +396,7 @@ function SectionMesh({ mesh }: { mesh: NonNullable<StateSnapshot['mesh']> }) {
             </span>
           </div>
           {g.items.map((d) => (
-            <ArticleMesh key={d.id} n={numero.get(d.id)!} dm={d} />
+            <ArticleMesh key={d.id} n={numero.get(d.id)!} dm={d} state={state} />
           ))}
         </section>
       ))}
@@ -493,7 +577,7 @@ function Contenu() {
         {state.mesh && (
           <div className="boite-colonnes">
             <div className="liste" data-node="1-2.liste">
-              <SectionMesh mesh={state.mesh} />
+              <SectionMesh state={state} />
             </div>
           </div>
         )}
@@ -541,7 +625,7 @@ function Contenu() {
               ))}
             </section>
           ))}
-          {state.mesh && <SectionMesh mesh={state.mesh} />}
+          {state.mesh && <SectionMesh state={state} />}
         </div>
       </div>
     </main>

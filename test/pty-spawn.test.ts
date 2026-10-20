@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { AidHttpError } from '../src/daemon/errors.js';
 import { LogWriter } from '../src/daemon/pty/log.js';
-import { agentCommand, agentEnv, resolveOnPath } from '../src/daemon/pty/spawn.js';
+import { agentCommand, agentEnv, meshEnv, resolveOnPath } from '../src/daemon/pty/spawn.js';
 import { waitFor } from './helpers/daemon.js';
 import { type Ctx, makeTopic, setupWorkspace } from './helpers/topics.js';
 
@@ -221,4 +221,97 @@ test('agent.spawned porte kind, role, cwd, pid et commande (schéma d’événem
   const e = c.t.store.since(null).find((x) => x.type === 'agent.spawned')!;
   expect(e.data).toMatchObject({ kind: 'shell', role: 'free', cwd: a.topic.wt, pid: a.agent.pid });
   expect(e.data.command).toEqual(a.agent.command);
+});
+
+// 12.6 (D38) : la cell swarph en PTY. Faux swarph (D40) ; jamais le token dans l'environnement.
+const FAKE_SWARPH = join(import.meta.dirname, 'fixtures/fake-swarph.sh');
+
+test('agentCommand et meshEnv pour swarph-cell : la commande spawn, l’environnement du mesh pour cette cell seulement', () => {
+  const mesh = { bin: '/opt/swarph', cellFile: '/home/moi/.config/swarph/cells/morzu-mac.yaml' };
+  expect(agentCommand('swarph-cell', {}, mesh)).toEqual([
+    '/opt/swarph',
+    'spawn',
+    mesh.cellFile,
+    '--no-starter',
+    '--no-banner',
+  ]);
+  expect(() => agentCommand('swarph-cell', {})).toThrow(/mesh non configuré/);
+  const cfg = { gateway: 'http://gw.example:8788', stateRoot: '/home/moi/swarph_state' };
+  expect(meshEnv('swarph-cell', cfg)).toEqual({
+    MESH_GATEWAY_URL: 'http://gw.example:8788',
+    SWARPH_STATE: '/home/moi/swarph_state',
+  });
+  expect(meshEnv('claude', cfg)).toEqual({});
+  expect(meshEnv('swarph-cell', { gateway: '', stateRoot: '' })).toEqual({});
+});
+
+test('swarph-cell : une session par cell (409), MESH_GATEWAY_URL et SWARPH_STATE dans son PTY, jamais sans mesh.cell', async () => {
+  process.env.SHELL = '/bin/sh';
+  const home = mkdtempSync(join(tmpdir(), 'aid-cell-'));
+  const { DEFAULT_CONFIG } = await import('../src/daemon/config.js');
+  c = await setupWorkspace({
+    config: {
+      mesh: {
+        ...DEFAULT_CONFIG.mesh,
+        bin: FAKE_SWARPH,
+        cell: 'morzu-mac',
+        cellFile: join(home, 'morzu-mac.yaml'),
+        gateway: 'http://mesh-gw.example:8788',
+        stateRoot: join(home, 'swarph_state'),
+      },
+    },
+  });
+  const topic = await makeTopic(c);
+  const agent = c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swarph-cell' });
+  expect(agent.kind).toBe('swarph-cell');
+  expect(agent.command).toEqual([
+    FAKE_SWARPH,
+    'spawn',
+    join(home, 'morzu-mac.yaml'),
+    '--no-starter',
+    '--no-banner',
+  ]);
+  let text = '';
+  c.t.d.agents.get(agent.id)!.subscribe((chunk) => (text += chunk));
+  await waitFor(() => text.includes('SWARPH_SELF='), 5000, 'sortie de la cell');
+  expect(text).toContain(
+    `FAKE_CELL cell=${join(home, 'morzu-mac.yaml')} args=--no-starter --no-banner`,
+  );
+  expect(text).toContain('MESH_GATEWAY_URL=http://mesh-gw.example:8788');
+  expect(text).toContain(`SWARPH_STATE=${join(home, 'swarph_state')}`);
+  // SWARPH_SELF est posé par spawn lui-même, pas par A-I-D
+  expect(text).toMatch(/SWARPH_SELF=\r?\n/);
+  // une seconde cell : refusée tant que la première vit
+  expect(() => c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swarph-cell' })).toThrow(
+    expect.objectContaining({ status: 409, message: expect.stringContaining('déjà ouverte') }),
+  );
+  // un claude ordinaire n'hérite rien du mesh
+  const shell = c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'shell' });
+  let sh = '';
+  c.t.d.agents.get(shell.id)!.subscribe((chunk) => (sh += chunk));
+  c.t.d.agents
+    .get(shell.id)!
+    .pty.write('echo "GW=[$MESH_GATEWAY_URL]"; echo "ST=[$SWARPH_STATE]"\n');
+  await waitFor(() => /ST=\[/.test(sh), 5000, 'shell');
+  expect(sh).toContain('GW=[]');
+  expect(sh).toContain('ST=[]');
+  c.t.d.agents.get(agent.id)!.pty.write('quit\n');
+  await waitFor(
+    () => c.t.store.since(null).find((e) => e.type === 'agent.exited' && e.agentId === agent.id),
+    10_000,
+    'sortie de la cell',
+  );
+  // la cell sortie, une nouvelle peut s'ouvrir
+  const again = c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swarph-cell' });
+  expect(again.kind).toBe('swarph-cell');
+});
+
+test('swarph-cell sans mesh.cell : 409, aucun agent créé', async () => {
+  process.env.SHELL = '/bin/sh';
+  c = await setupWorkspace();
+  const topic = await makeTopic(c);
+  expect(() => c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swarph-cell' })).toThrow(
+    expect.objectContaining({ status: 409, message: expect.stringContaining('mesh désactivé') }),
+  );
+  expect(c.t.db.prepare('SELECT count(*) AS n FROM agents').get()).toEqual({ n: 0 });
 });
