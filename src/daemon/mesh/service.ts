@@ -1,7 +1,7 @@
 import type { MeshConfig } from '../config.js';
 import type { Db } from '../db.js';
 import type { EventStore } from '../events/store.js';
-import type { MeshMonitor, MeshState, MeshTailscale } from '../../shared/model.js';
+import type { MeshDm, MeshMonitor, MeshState, MeshTailscale } from '../../shared/model.js';
 import { type MeshExec, meshExec } from './exec.js';
 import { InboxFollower } from './inbox.js';
 import { meshPaths } from './paths.js';
@@ -71,6 +71,40 @@ export class MeshService {
 
   get inboxLog(): string {
     return this.paths.inboxLog;
+  }
+
+  /** La boîte projetée (12.4) : les plus récents d'abord, bornée. */
+  inbox(limit = 200): MeshDm[] {
+    const rows = this.deps.db
+      .prepare('SELECT * FROM mesh_inbox ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(limit) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: r.id as number,
+      threadId: (r.thread_id as string | null) ?? null,
+      from: r.from_node as string,
+      to: r.to_node as string,
+      kind: r.kind as MeshDm['kind'],
+      content: r.content as string,
+      createdAt: r.created_at as string,
+      replyTo: (r.reply_to as number | null) ?? null,
+      obligationId: (r.obligation_id as string | null) ?? null,
+      seenAt: (r.seen_at as string | null) ?? null,
+    }));
+  }
+
+  /**
+   * « Vu » (12.4) : une marque locale de l'humain dans A-I-D, jamais le `read_at` du gateway. Idempotent :
+   * la première marque reste. Rend null si le DM est inconnu. Écriture directe (pas un événement) : c'est
+   * un signet d'affichage, pas un fait du mesh — il ne survit pas à une reconstruction depuis le journal.
+   */
+  markSeen(id: number): { id: number; seenAt: string } | null {
+    const row = this.deps.db.prepare('SELECT seen_at FROM mesh_inbox WHERE id = ?').get(id) as
+      { seen_at: string | null } | undefined;
+    if (!row) return null;
+    if (row.seen_at) return { id, seenAt: row.seen_at };
+    const seenAt = this.now();
+    this.deps.db.prepare('UPDATE mesh_inbox SET seen_at = ? WHERE id = ?').run(seenAt, id);
+    return { id, seenAt };
   }
 
   /**

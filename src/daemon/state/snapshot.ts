@@ -3,6 +3,7 @@ import type { ActionRun, Agent, Run, Topic, TopicIndex, Workspace } from '../../
 import type { StateSnapshot } from '../../shared/state.js';
 import type { Db } from '../db.js';
 import type { StructuralService } from '../structural/service.js';
+import type { MeshService } from '../mesh/service.js';
 
 type Row = Record<string, unknown>;
 
@@ -26,6 +27,7 @@ export async function buildSnapshot(
   db: Db,
   engine: StructuralService,
   all = false,
+  mesh: MeshService | null = null,
 ): Promise<StateSnapshot> {
   const workspaces = (db.prepare('SELECT * FROM workspaces ORDER BY name').all() as Row[]).map(
     (r): Workspace => ({
@@ -121,5 +123,14 @@ export async function buildSnapshot(
     }));
   const last = db.prepare('SELECT id FROM events ORDER BY seq DESC LIMIT 1').get() as
     { id: string } | undefined;
-  return { lastEventId: last?.id ?? null, workspaces, topics, runs, agents, actions };
+  return {
+    lastEventId: last?.id ?? null,
+    workspaces,
+    topics,
+    runs,
+    agents,
+    actions,
+    // 12.4 : présent seulement quand une cell est configurée (D39)
+    ...(mesh && { mesh: { state: mesh.current(), inbox: mesh.inbox() } }),
+  };
 }

@@ -235,6 +235,7 @@ export async function startDaemon(
       paths,
       structural,
       indexer,
+      mesh,
       requestStop: opts.onStopRequested,
       requestUpdate: opts.onUpdateRequested,
       requestCycle: opts.onCycleRequested,
