@@ -8,7 +8,7 @@ export const url = () => process.env.AID_E2E_URL!;
 export const node = (page: Page, id: string) => page.locator(`[data-node="${id}"]`);
 
 interface ApiState {
-  topics: Array<{ id: string }>;
+  topics: Array<{ id: string; branch: string }>;
   agents: Array<{ id: string; status: string; pid: number }>;
 }
 

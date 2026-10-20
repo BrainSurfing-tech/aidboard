@@ -267,7 +267,7 @@ function OuvrirCell({ n, state }: { n: number; state: StateSnapshot }) {
  * jamais interprété (même raison que D30). « Vu » le retire de la Boîte (12.4) ; « Ouvrir la cell » arrive en 12.6.
  */
 function ArticleMesh({ n, dm, state }: { n: number; dm: MeshDm; state: StateSnapshot }) {
-  const { call } = useAid();
+  const { call, refresh } = useAid();
   const [busy, setBusy] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const id = (rest: string) => `1-2.mesh.dm-${n}.${rest}`;
@@ -277,6 +277,8 @@ function ArticleMesh({ n, dm, state }: { n: number; dm: MeshDm; state: StateSnap
     setErreur(null);
     try {
       await call('POST', `/api/mesh/dm/${dm.id}/seen`);
+      // la marque « vu » est locale (12.4) : aucun événement ne la porte, l'instantané se relit ici
+      await refresh();
     } catch (err) {
       setErreur(err instanceof Error ? err.message : String(err));
     } finally {
