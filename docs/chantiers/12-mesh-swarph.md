@@ -2,13 +2,54 @@
 
 Branche : `feat/mesh-swarph`, depuis `main`.
 
-## Index structurel : indisponible cette session
+## Index structurel : disponible depuis le 2026-10-20
 
-`.codegraph/` n'existe pas dans le worktree qui a produit ce plan et le MCP `codegraph`
-n'a pas pu se connecter. Tout le rayon d'impact ci-dessous vient d'une lecture directe
-(`grep`/`Read` du code d'A-I-D et de `~/Projects/swarph-cli`), **pas** d'un `index_impact`
-déclaré. L'exécutant qui ouvre ce plan avec l'index disponible le requête lui-même avant le
-premier point.
+Le plan a été rédigé le 2026-10-19 sans index (`.codegraph/` absent du worktree, MCP
+`codegraph` injoignable) ; l'« État actuel » ci-dessous venait d'une lecture directe. Le
+2026-10-20, la branche a été rebasée sur `main` (v0.2.2, après le chantier 13) et l'index
+interrogé (`codegraph_explore`, provenance `candidate`, tree-sitter). Rayon d'impact des
+symboles que les points touchent :
+
+- `agentCommand`, `agentEnv`, `SpawnKind` (`src/daemon/pty/spawn.ts`) → `AgentManager.spawn`
+  et `src/daemon/pty/reprise.ts` ; test `test/pty-spawn.test.ts`.
+- `EVENT_SOURCES`, `EVENT_TYPES` (`src/shared/events.ts`) → `src/cli/commands/emit.ts`,
+  `src/daemon/events/admit.ts` ; aucun test à moins de trois sauts — le test de 12.1 en est
+  le premier.
+- `StateSnapshot` (`src/shared/state.ts`) → 22 appelants : `src/cli/commands/status.ts`,
+  `src/daemon/state/snapshot.ts`, `web/src/data/client.ts` ; tests `state`, `agents-routes`,
+  `topic-create`, `topic-fetch` et 8 autres. Le champ `mesh` est optionnel pour ne rien y
+  casser.
+- `AgentKind` (`src/shared/model.ts`) → `Agent.kind` ; testé via `test/agents-routes.test.ts`,
+  `test/web/boite.test.tsx` et 3 autres.
+- `registerAgentRoutes` (`src/daemon/routes/agents.ts`) → `src/daemon/server.ts` ; test
+  `test/securite.test.ts`.
+- `AgentManager` (`src/daemon/pty/manager.ts`) → `reprise.ts`, `routes/agents.ts`,
+  `ws/pty.ts`, `main.ts` (14 appelants) ; test `test/securite.test.ts`.
+- `loadConfig` / `parseConfig` (`src/daemon/config.ts`) → `src/cli/commands/doctor.ts`,
+  `src/daemon/main.ts` ; test `test/config.test.ts`.
+- `runDoctor` (`src/cli/commands/doctor.ts`) → `src/cli/aid.ts` ; test `test/doctor.test.ts`.
+- `Boite` → `Layout` → `Barre` (rendu) ; `App` rend `Boite` et `Notifieur`.
+
+Ce que la relecture du 2026-10-20 change à l'« État actuel » (le reste est inchangé sur
+`main` v0.2.2) :
+
+- La liste des binaires de `aid doctor` est en `src/cli/commands/doctor.ts:126-130` (plus
+  106-112) ; `runDoctor` à la ligne 334. Le chantier 13 y a ajouté le mode d'installation
+  (`repo` / `release`) et la version : les vérifications mesh s'y ajoutent sans les toucher.
+- `src/daemon/main.ts` construit aussi `StructuralService` et `MemoryService` à côté de
+  `MemoryWorker` et `UpdateWatcher` (lignes 125-204) : le service mesh prend le même chemin.
+- `migrations/` est toujours à 8 ; `009_mesh.sql` reste libre.
+- La table des décisions du README s'arrête à D33 ; le chantier 13 n'en a pas numéroté :
+  D34–D41 restent libres.
+- Fondations vérifiées sur la branche rebasée : `npm run gate` vert en entier (une seule
+  relance : `test/pty-spawn.test.ts` échoue si la session qui lance le gate exporte des
+  `AID_*`, comme un agent lancé depuis A-I-D — relancer avec `env -u AID_HOME -u
+  AID_NO_BROWSER`, le code n'est pas en cause).
+- Prérequis 12.0 sur le Mac au 2026-10-20 : `swarph` absent (`uv` et `python3.12`
+  présents), Tailscale installé mais **arrêté** (`mesh-gw` bien dans la liste des pairs),
+  gateway injoignable tant que Tailscale est arrêté, aucune cell ni token
+  (`~/.config/swarph` absent). Rien n'a bougé depuis le constat du 19 : 12.1 à 12.6 se
+  développent avec les faux binaires (D40) ; 12.7 attend 12.0.
 
 ## Pourquoi
 
