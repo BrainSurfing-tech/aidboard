@@ -4,10 +4,12 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { onPath } from '../../daemon/actions/editor.js';
 import { readProcVersion } from '../../daemon/routes/workspaces.js';
 import { loadConfig } from '../../daemon/config.js';
+import { meshPaths } from '../../daemon/mesh/paths.js';
+import { tailscaleState } from '../../daemon/mesh/tailscale.js';
 import type { MemoryHealth } from '../../daemon/memory/service.js';
 import type { AidPaths } from '../../daemon/paths.js';
 import type { IndexStatus } from '../../shared/structural.js';
@@ -16,13 +18,24 @@ import { hooksStatus } from '../../daemon/hooks/claudeSettings.js';
 import { daemonFetch, runningDaemon } from '../daemonInfo.js';
 import { readVersion } from '../version.js';
 import { currentServer, installMode } from '../../daemon/install.js';
-import type { InstallMode } from '../../shared/model.js';
+import type { InstallMode, MeshTailscale } from '../../shared/model.js';
 
 export type Level = 'ok' | 'warn' | 'ko';
 export interface Check {
   level: Level;
   label: string;
   detail?: string;
+}
+
+/** Ce que `aid doctor` regarde du mesh (12.2) : l'existence des fichiers, jamais le contenu du token. */
+export interface MeshProbe {
+  cell: string;
+  bin: string;
+  cellFile: string;
+  cellFileReadable: boolean;
+  tokenExists: boolean;
+  gateway: string;
+  tailscale: MeshTailscale;
 }
 
 export interface Probes {
@@ -40,6 +53,7 @@ export interface Probes {
   mcpRegistration(): boolean; // true si `aid-memory` (06.5) est encore enregistré dans ~/.claude.json (DS10)
   structural(): Promise<IndexStatus | null>; // état du premier workspace ; null = daemon arrêté, aucun workspace, ou index indisponible
   install(): { mode: InstallMode; version: string | null }; // 13.2 : comment cette CLI est installée ; version = celle de ~/.aid/server/current (mode release)
+  mesh(): Promise<MeshProbe | null>; // 12.2 : null = mesh désactivé (`mesh.cell` vide)
 }
 
 export function nodeSupported(v: string): boolean {
@@ -204,6 +218,50 @@ export async function runChecks(p: Probes): Promise<Check[]> {
     });
   }
 
+  // 12.2 : le mesh est optionnel, tout est `warn` ; chaque prérequis manquant est nommé, le token jamais affiché.
+  const mesh = await p.mesh();
+  if (!mesh) add('ok', 'mesh : désactivé (`mesh.cell` vide dans config.yaml)');
+  else {
+    if (!p.has(mesh.bin)) {
+      add(
+        'warn',
+        `${mesh.bin} introuvable`,
+        'mesh désactivé : uv tool install --python 3.12 swarph-cli',
+      );
+    } else {
+      const v = await p.version(mesh.bin, ['--version']);
+      verify(v !== null, `swarph ${v ?? ''}`.trim(), {
+        level: 'warn',
+        label: 'swarph : version illisible',
+        detail:
+          '`swarph --version` a échoué : réinstaller (uv tool install --python 3.12 swarph-cli)',
+      });
+    }
+    verify(mesh.cellFileReadable, `cell ${mesh.cell} (${mesh.cellFile})`, {
+      level: 'warn',
+      label: `cell ${mesh.cell} : fichier illisible`,
+      detail: `${mesh.cellFile} : swarph init ${mesh.cell} --provider claude --role ${mesh.cell}`,
+    });
+    verify(mesh.tokenExists, `token de ${mesh.cell} présent`, {
+      level: 'warn',
+      label: `token de ${mesh.cell} absent`,
+      detail: `~/.config/swarph/${mesh.cell}.peer_token : enregistrement auprès du mesh (swarph onboard ${mesh.cell})`,
+    });
+    verify(mesh.gateway !== '', `gateway ${mesh.gateway}`, {
+      level: 'warn',
+      label: 'mesh.gateway vide',
+      detail: 'l’URL du gateway va dans ~/.aid/config.yaml (mesh.gateway)',
+    });
+    if (mesh.tailscale === 'running') add('ok', 'Tailscale : connecté');
+    else if (mesh.tailscale === 'stopped')
+      add(
+        'warn',
+        'Tailscale arrêté',
+        'le gateway est sur le tailnet : démarrer Tailscale (A-I-D ne le fait pas tant que mesh.tailscale.manage vaut false)',
+      );
+    else add('warn', 'Tailscale introuvable', 'installer Tailscale, ou poser mesh.tailscale.bin');
+  }
+
   const mem = await p.memoryHealth();
   if (mem) {
     const total = Object.values(mem.pages).reduce((a, b) => a + b, 0);
@@ -290,6 +348,28 @@ export function realProbes(paths: AidPaths): Probes {
       return {
         mode,
         version: mode === 'release' ? (currentServer(paths.home)?.version ?? null) : null,
+      };
+    },
+    async mesh() {
+      const cfg = loadConfig(paths).mesh;
+      if (!cfg.cell) return null;
+      const mp = meshPaths(cfg, homedir());
+      const readable = (f: string) => {
+        try {
+          accessSync(f, constants.R_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      return {
+        cell: cfg.cell,
+        bin: cfg.bin,
+        cellFile: mp.cellFile,
+        cellFileReadable: readable(mp.cellFile),
+        tokenExists: existsSync(mp.tokenFile),
+        gateway: cfg.gateway,
+        tailscale: await tailscaleState(cfg.tailscale.bin),
       };
     },
     async structural() {

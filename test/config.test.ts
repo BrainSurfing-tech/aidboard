@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import {
   ConfigError,
   DEFAULT_CONFIG,
+  DEFAULT_TAILSCALE_BIN,
   loadConfig,
   parseConfig,
   writeDefaultConfigIfAbsent,
@@ -114,4 +115,46 @@ test('ensureHome pose 0700, y compris sur un dossier déjà en 0755', () => {
   for (const d of [p.home, p.logs, p.actionLogs, p.worktrees, p.spool]) {
     expect(statSync(d).mode & 0o777).toBe(0o700);
   }
+});
+
+test('mesh (12.2) : les défauts — désactivé, Tailscale lu mais jamais piloté', () => {
+  expect(DEFAULT_CONFIG.mesh).toEqual({
+    bin: 'swarph',
+    cell: '',
+    cellFile: '',
+    gateway: '',
+    stateRoot: '',
+    tailscale: { manage: false, bin: DEFAULT_TAILSCALE_BIN },
+  });
+  expect(DEFAULT_TAILSCALE_BIN).toBe(
+    process.platform === 'darwin'
+      ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
+      : 'tailscale',
+  );
+});
+
+test('mesh (12.2) : fusion partielle, le reste vient des défauts', () => {
+  const cfg = parseConfig(
+    'mesh:\n  cell: morzu-mac\n  gateway: http://mesh-gw.example.ts.net:8788\n  tailscale:\n    manage: true\n',
+  );
+  expect(cfg.mesh).toEqual({
+    ...DEFAULT_CONFIG.mesh,
+    cell: 'morzu-mac',
+    gateway: 'http://mesh-gw.example.ts.net:8788',
+    tailscale: { manage: true, bin: DEFAULT_TAILSCALE_BIN },
+  });
+});
+
+test('mesh (12.2) : clé inconnue et champs invalides sont refusés et nommés', () => {
+  expect(() => parseConfig('mesh:\n  token: abc\n')).toThrow('mesh.token');
+  expect(() => parseConfig('mesh:\n  cell: 1\n')).toThrow('mesh.cell');
+  expect(() => parseConfig('mesh:\n  cell: "a b"\n')).toThrow('mesh.cell');
+  expect(() => parseConfig('mesh:\n  gateway: mesh-gw:8788\n')).toThrow('mesh.gateway');
+  expect(() => parseConfig('mesh:\n  bin: ""\n')).toThrow('mesh.bin');
+  expect(() => parseConfig('mesh:\n  tailscale: 1\n')).toThrow('mesh.tailscale');
+  expect(() => parseConfig('mesh:\n  tailscale:\n    up: true\n')).toThrow('mesh.tailscale.up');
+  expect(() => parseConfig('mesh:\n  tailscale:\n    manage: oui\n')).toThrow(
+    'mesh.tailscale.manage',
+  );
+  expect(() => parseConfig('mesh: []\n')).toThrow('mesh doit être un objet');
 });

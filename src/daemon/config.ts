@@ -10,6 +10,7 @@ export interface AidConfig {
   terminal: { scrollback: number; logMaxBytes: number; logRetentionDays: number };
   memory: MemoryConfig;
   structural: StructuralConfig;
+  mesh: MeshConfig;
 }
 
 export interface MemoryConfig {
@@ -26,6 +27,26 @@ export interface StructuralConfig {
   exclude: string[];
 }
 
+/** Mesh swarph (chantier 12, D39). `cell` vide = mesh désactivé, rien n'apparaît dans l'UI. Le token n'y figure jamais. */
+export interface MeshConfig {
+  /** nom ou chemin du binaire swarph */
+  bin: string;
+  cell: string;
+  /** vide = `~/.config/swarph/cells/<cell>.yaml` */
+  cellFile: string;
+  /** `MESH_GATEWAY_URL` passé à swarph : une URL, pas un secret */
+  gateway: string;
+  /** vide = `~/swarph_state` */
+  stateRoot: string;
+  /** manage: true = `tailscale up`/`down` par A-I-D (D37 : défaut false, Tailscale sert aussi à autre chose) */
+  tailscale: { manage: boolean; bin: string };
+}
+
+export const DEFAULT_TAILSCALE_BIN =
+  process.platform === 'darwin'
+    ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
+    : 'tailscale';
+
 export const DEFAULT_CONFIG: AidConfig = {
   host: '127.0.0.1',
   port: 4870,
@@ -38,6 +59,14 @@ export const DEFAULT_CONFIG: AidConfig = {
     git: { push: false },
   },
   structural: { engine: 'codegraph', bin: 'codegraph', timeoutMs: 60_000, exclude: [] },
+  mesh: {
+    bin: 'swarph',
+    cell: '',
+    cellFile: '',
+    gateway: '',
+    stateRoot: '',
+    tailscale: { manage: false, bin: DEFAULT_TAILSCALE_BIN },
+  },
 };
 
 export class ConfigError extends Error {}
@@ -73,7 +102,11 @@ export function parseConfig(text: string): AidConfig {
   const doc: unknown = text.trim() === '' ? {} : parse(text);
   if (doc === null || doc === undefined) return structuredClone(DEFAULT_CONFIG);
   if (!isRecord(doc)) throw new ConfigError('config.yaml : un objet est attendu à la racine');
-  rejectUnknown(doc, ['host', 'port', 'editor', 'env', 'terminal', 'memory', 'structural'], '');
+  rejectUnknown(
+    doc,
+    ['host', 'port', 'editor', 'env', 'terminal', 'memory', 'structural', 'mesh'],
+    '',
+  );
 
   const cfg = structuredClone(DEFAULT_CONFIG);
   if (doc.host !== undefined && doc.host !== '127.0.0.1') {
@@ -104,6 +137,7 @@ export function parseConfig(text: string): AidConfig {
   }
   if (doc.memory !== undefined) parseMemory(doc.memory, cfg.memory);
   if (doc.structural !== undefined) parseStructural(doc.structural, cfg.structural);
+  if (doc.mesh !== undefined) parseMesh(doc.mesh, cfg.mesh);
   return cfg;
 }
 
@@ -176,6 +210,41 @@ function parseStructural(raw: unknown, cfg: StructuralConfig): void {
   if (raw.exclude !== undefined) cfg.exclude = stringList(raw.exclude, 'structural.exclude');
 }
 
+// `cell`, `cellFile` et `stateRoot` acceptent la chaîne vide (= désactivé ou dérivé) ; les autres chaînes non.
+function strOrEmpty(v: unknown, name: string): string {
+  if (typeof v !== 'string') throw new ConfigError(`config.yaml : ${name} doit être une chaîne`);
+  return v;
+}
+
+function parseMesh(raw: unknown, cfg: MeshConfig): void {
+  if (!isRecord(raw)) throw new ConfigError('config.yaml : mesh doit être un objet');
+  rejectUnknown(raw, ['bin', 'cell', 'cellFile', 'gateway', 'stateRoot', 'tailscale'], 'mesh.');
+  if (raw.bin !== undefined) cfg.bin = str(raw.bin, 'mesh.bin');
+  if (raw.cell !== undefined) {
+    cfg.cell = strOrEmpty(raw.cell, 'mesh.cell');
+    if (!/^[A-Za-z0-9._-]*$/.test(cfg.cell)) {
+      throw new ConfigError(
+        'config.yaml : mesh.cell — lettres, chiffres, point, tiret et souligné seulement',
+      );
+    }
+  }
+  if (raw.cellFile !== undefined) cfg.cellFile = strOrEmpty(raw.cellFile, 'mesh.cellFile');
+  if (raw.gateway !== undefined) {
+    cfg.gateway = strOrEmpty(raw.gateway, 'mesh.gateway');
+    if (cfg.gateway !== '' && !/^https?:\/\//.test(cfg.gateway)) {
+      throw new ConfigError('config.yaml : mesh.gateway doit être une URL http(s)');
+    }
+  }
+  if (raw.stateRoot !== undefined) cfg.stateRoot = strOrEmpty(raw.stateRoot, 'mesh.stateRoot');
+  const t = raw.tailscale;
+  if (t !== undefined) {
+    if (!isRecord(t)) throw new ConfigError('config.yaml : mesh.tailscale doit être un objet');
+    rejectUnknown(t, ['manage', 'bin'], 'mesh.tailscale.');
+    if (t.manage !== undefined) cfg.tailscale.manage = bool(t.manage, 'mesh.tailscale.manage');
+    if (t.bin !== undefined) cfg.tailscale.bin = str(t.bin, 'mesh.tailscale.bin');
+  }
+}
+
 export function loadConfig(p: AidPaths): AidConfig {
   if (!existsSync(p.config)) return structuredClone(DEFAULT_CONFIG);
   return parseConfig(readFileSync(p.config, 'utf8'));
@@ -208,6 +277,15 @@ const DEFAULT_FILE = `# Configuration d'A-I-D. Tout est facultatif : ce sont les
 #   bin: codegraph         # chemin ou nom du binaire codegraph
 #   timeoutMs: 60000
 #   exclude: []            # dossiers à exclure des résultats (dist, …) — ex. ["dist"]
+# mesh:                    # mesh swarph (chantier 12) ; cell vide = désactivé
+#   bin: swarph
+#   cell: ""               # ex. morzu-mac — sa propre identité, jamais celle d'une autre machine
+#   cellFile: ""           # vide = ~/.config/swarph/cells/<cell>.yaml
+#   gateway: ""            # ex. http://mesh-gw.example.ts.net:8788 (MESH_GATEWAY_URL, pas un secret)
+#   stateRoot: ""          # vide = ~/swarph_state
+#   tailscale:
+#     manage: false        # true : A-I-D lance tailscale up/down à la connexion ; false : il le lit seulement
+#     bin: /Applications/Tailscale.app/Contents/MacOS/Tailscale   # tailscale sous Linux
 `;
 
 export function writeDefaultConfigIfAbsent(p: AidPaths): void {

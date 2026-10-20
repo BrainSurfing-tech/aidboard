@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import {
   gitAtLeast,
   nodeSupported,
+  type MeshProbe,
   type Probes,
   runChecks,
   runDoctor,
@@ -24,6 +25,7 @@ const good: Probes = {
   mcpRegistration: () => false,
   structural: async () => null,
   install: () => ({ mode: 'repo', version: null }),
+  mesh: async () => null,
 };
 
 const levels = async (over: Partial<Probes>) =>
@@ -286,3 +288,78 @@ test('installation (13.2) : repo et release sont ✓ avec leur mode, inconnu est
   expect(warn.level).toBe('warn');
   expect(warn.detail).toContain('install-server.sh');
 });
+
+const meshOk: MeshProbe = {
+  cell: 'morzu-mac',
+  bin: 'swarph',
+  cellFile: '/home/j/.config/swarph/cells/morzu-mac.yaml',
+  cellFileReadable: true,
+  tokenExists: true,
+  gateway: 'http://mesh-gw.example.ts.net:8788',
+  tailscale: 'running',
+};
+
+test('mesh (12.2) : désactivé = une ligne ✓ et rien d’autre ; configuré et sain = aucun ⚠', async () => {
+  const off = await runChecks(good);
+  expect(off.filter((c) => /mesh|swarph|Tailscale|cell|token/.test(c.label))).toEqual([
+    { level: 'ok', label: 'mesh : désactivé (`mesh.cell` vide dans config.yaml)' },
+  ]);
+  const on = await runChecks({
+    ...good,
+    mesh: async () => meshOk,
+    version: async (bin) => (bin === 'swarph' ? '0.72.25' : 'git version 2.54.0'),
+  });
+  expect(on.filter((c) => c.level !== 'ok')).toEqual([]);
+  expect(on.map((c) => c.label)).toEqual(
+    expect.arrayContaining([
+      'swarph 0.72.25',
+      'cell morzu-mac (/home/j/.config/swarph/cells/morzu-mac.yaml)',
+      'token de morzu-mac présent',
+      'gateway http://mesh-gw.example.ts.net:8788',
+      'Tailscale : connecté',
+    ]),
+  );
+});
+
+test('mesh (12.2) : chaque prérequis manquant est un ⚠ nommé, le token n’est jamais affiché', async () => {
+  const mesh = (over: Partial<typeof meshOk>) => ({
+    ...good,
+    mesh: async () => ({ ...meshOk, ...over }),
+  });
+  const sans = await runChecks({ ...mesh({}), has: (b) => b !== 'swarph' });
+  const swarph = sans.find((c) => c.label === 'swarph introuvable')!;
+  expect(swarph.level).toBe('warn');
+  expect(swarph.detail).toContain('uv tool install --python 3.12 swarph-cli');
+  expect(sans.some((c) => c.level === 'ko')).toBe(false);
+
+  const illisible = await runChecks({
+    ...mesh({}),
+    version: async (bin) => (bin === 'swarph' ? null : 'git version 2.54.0'),
+  });
+  expect(illisible.find((c) => c.label === 'swarph : version illisible')!.level).toBe('warn');
+
+  expect(await levels({ ...mesh({ cellFileReadable: false }) })).toContain(
+    'warn:cell morzu-mac : fichier illisible',
+  );
+  const token = (await runChecks(mesh({ tokenExists: false }))).find(
+    (c) => c.label === 'token de morzu-mac absent',
+  )!;
+  expect(token.level).toBe('warn');
+  expect(token.detail).toContain('swarph onboard morzu-mac');
+  expect(await levels(mesh({ gateway: '' }))).toContain('warn:mesh.gateway vide');
+  const stopped = (await runChecks(mesh({ tailscale: 'stopped' }))).find(
+    (c) => c.label === 'Tailscale arrêté',
+  )!;
+  expect(stopped.level).toBe('warn');
+  expect(stopped.detail).toContain('mesh.tailscale.manage');
+  expect(await levels(mesh({ tailscale: 'absent' }))).toContain('warn:Tailscale introuvable');
+  // ni le contenu d'un token, ni un chemin de token réel : seule la convention est citée
+  const all = await runDoctorLines(mesh({ tokenExists: false }));
+  expect(all.join('\n')).not.toMatch(/peer_token[^\n]*[A-Za-z0-9]{20,}/);
+});
+
+async function runDoctorLines(p: Probes): Promise<string[]> {
+  const lines: string[] = [];
+  await runDoctor(resolvePaths('/nonexistent/aid-home'), p, (s) => lines.push(s));
+  return lines;
+}
