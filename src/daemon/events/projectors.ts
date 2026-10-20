@@ -1,6 +1,7 @@
 import type { Db } from '../db.js';
 import type { AidEvent } from '../../shared/events.js';
 import { AGENT_STATUSES, clip, isSubSession, sanitizeDetail, sanitizePending } from './status.js';
+import { MESH_DM_KINDS } from '../../shared/model.js';
 
 const STOPPED_REASONS = new Set(['user', 'daemon_restart', 'daemon_stop']);
 const ENDED = new Set(['done', 'error', 'stopped']);
@@ -47,6 +48,34 @@ function projectStatus(tx: Db, e: AidEvent, d: Record<string, unknown>): void {
     e.ts,
     e.agentId,
   );
+}
+
+// Un DM du mesh (12.1, D36) : idempotent par son id swarph, en plus de l'ULID de l'événement. Un rejeu ne duplique rien.
+function projectMeshDm(tx: Db, e: AidEvent, d: Record<string, unknown>): void {
+  if (!Number.isInteger(d.id) || !MESH_DM_KINDS.includes(d.kind as never)) return;
+  tx.prepare(
+    'INSERT OR IGNORE INTO mesh_inbox (id, thread_id, from_node, to_node, kind, content, created_at, reply_to, obligation_id, seen_at, event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)',
+  ).run(
+    d.id,
+    clip(d.threadId, 200),
+    clip(d.from, 200) ?? '',
+    clip(d.to, 200) ?? '',
+    d.kind,
+    typeof d.content === 'string' ? d.content : '',
+    clip(d.createdAt, 40) ?? e.ts,
+    Number.isInteger(d.replyTo) ? d.replyTo : null,
+    clip(d.obligationId, 200),
+    e.id,
+  );
+}
+
+// L'état du mesh (12.1, D36) : une clé par champ, la valeur en JSON ; le dernier événement l'emporte.
+const MESH_STATE_KEYS = ['connected', 'tailscale', 'monitor', 'pending', 'since', 'cell'] as const;
+function projectMeshState(tx: Db, d: Record<string, unknown>): void {
+  const upsert = tx.prepare(
+    'INSERT INTO mesh_state (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
+  );
+  for (const k of MESH_STATE_KEYS) if (d[k] !== undefined) upsert.run(k, JSON.stringify(d[k]));
 }
 
 export function project(tx: Db, e: AidEvent): void {
@@ -137,6 +166,12 @@ export function project(tx: Db, e: AidEvent): void {
         e.topicId ?? null,
         d.actionId,
       );
+      break;
+    case 'mesh.dm':
+      projectMeshDm(tx, e, d);
+      break;
+    case 'mesh.state':
+      projectMeshState(tx, d);
       break;
     default:
       break;

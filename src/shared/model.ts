@@ -151,3 +151,43 @@ export interface UpdateInfo {
   latest: string | null;
   lastError: string | null;
 }
+
+/** Mesh swarph (chantier 12, D36) : ce que le daemon projette d'`inbox.log` et de `monitor status`. */
+export type MeshDmKind = 'fyi' | 'status' | 'question' | 'answer' | 'unblock';
+export const MESH_DM_KINDS: readonly MeshDmKind[] = [
+  'fyi',
+  'status',
+  'question',
+  'answer',
+  'unblock',
+];
+
+export interface MeshDm {
+  /** id swarph, global au gateway et croissant : c'est lui qui rend `mesh.dm` idempotent */
+  id: number;
+  threadId: string | null;
+  from: string;
+  to: string;
+  kind: MeshDmKind;
+  /** donnée d'un pair : texte brut, jamais rendu en Markdown ni injecté dans un agent */
+  content: string;
+  createdAt: string;
+  replyTo: number | null;
+  obligationId: string | null;
+  /** marque locale posée dans A-I-D (12.4), jamais le `read_at` du gateway */
+  seenAt: string | null;
+}
+
+export type MeshTailscale = 'running' | 'stopped' | 'absent';
+export type MeshMonitor = 'running' | 'stopped' | 'stale' | 'absent';
+
+export interface MeshState {
+  connected: boolean;
+  tailscale: MeshTailscale;
+  monitor: MeshMonitor;
+  /** DM en attente côté monitor (`sinks[].pending`) */
+  pending: number;
+  /** depuis quand l'état `connected` courant tient (D41 : « hors mesh depuis <durée> ») */
+  since: string | null;
+  cell: string;
+}

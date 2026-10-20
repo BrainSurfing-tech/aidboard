@@ -2,6 +2,7 @@ export const EVENT_SOURCES = [
   'hook:claude',
   'codex:json',
   'swairm',
+  'swarph',
   'github',
   'daemon',
   'action',
@@ -33,6 +34,8 @@ export const EVENT_TYPES = [
   'task.status',
   'instructions.updated',
   'memory.page',
+  'mesh.dm',
+  'mesh.state',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
