@@ -1,0 +1,298 @@
+import type { MeshConfig } from '../config.js';
+import type { Db } from '../db.js';
+import type { EventStore } from '../events/store.js';
+import type { MeshMonitor, MeshState, MeshTailscale } from '../../shared/model.js';
+import { type MeshExec, meshExec } from './exec.js';
+import { InboxFollower } from './inbox.js';
+import { meshPaths } from './paths.js';
+import { tailscaleState } from './tailscale.js';
+
+export interface MeshServiceDeps {
+  config: MeshConfig;
+  home: string;
+  db: Db;
+  store: EventStore;
+  log: (line: string) => void;
+  /** tests : faux binaires par le PATH ou un exécuteur substitué */
+  exec?: MeshExec;
+  tailscale?: (bin: string) => Promise<MeshTailscale>;
+  refreshMs?: number;
+  pollMs?: number;
+  timeoutMs?: number;
+  now?: () => string;
+}
+
+/** `swarph monitor status --json` : ce qu'on en garde. */
+export function parseMonitorStatus(stdout: string): { monitor: MeshMonitor; pending: number } {
+  let parsed: { running?: unknown; pidfile_status?: unknown; sinks?: unknown };
+  try {
+    parsed = JSON.parse(stdout) as typeof parsed;
+  } catch {
+    return { monitor: 'stopped', pending: 0 };
+  }
+  const sinks = Array.isArray(parsed.sinks) ? (parsed.sinks as { pending?: unknown }[]) : [];
+  const pending = sinks.reduce(
+    (n, s) => n + (Number.isInteger(s?.pending) ? (s.pending as number) : 0),
+    0,
+  );
+  const monitor: MeshMonitor =
+    parsed.running === true ? 'running' : parsed.pidfile_status === 'stale' ? 'stale' : 'stopped';
+  return { monitor, pending };
+}
+
+/**
+ * Connecter, suivre, déconnecter (12.3, D35/D37). A-I-D ne parle jamais au gateway : il lance le monitor
+ * swarph (détaché, idempotent), lit `monitor status --json` et suit `inbox.log`. Tailscale est lu toujours,
+ * monté ou descendu seulement si `tailscale.manage` vaut true — et descendu seulement par qui l'a monté.
+ */
+export class MeshService {
+  private state: MeshState;
+  private follower: InboxFollower | null = null;
+  private refreshTimer: NodeJS.Timeout | null = null;
+  private tailscaleUpByUs = false;
+  private busy: Promise<void> = Promise.resolve();
+  private readonly paths;
+
+  constructor(private readonly deps: MeshServiceDeps) {
+    this.paths = meshPaths(deps.config, deps.home);
+    this.state = {
+      connected: false,
+      tailscale: 'absent',
+      monitor: 'absent',
+      pending: 0,
+      since: null,
+      cell: deps.config.cell,
+    };
+  }
+
+  current(): MeshState {
+    return { ...this.state };
+  }
+
+  get inboxLog(): string {
+    return this.paths.inboxLog;
+  }
+
+  /**
+   * Au démarrage du daemon : un seul `monitor status --json` décide de l'état affiché. Un monitor détaché
+   * survit au daemon — s'il tourne, on reprend le suivi sans le relancer ; sinon rien (pas de connexion
+   * automatique). Le `since` persisté est repris si l'état `connected` n'a pas changé.
+   */
+  async init(): Promise<void> {
+    await this.serial(async () => {
+      const persisted = this.readPersisted();
+      const tailscale = await this.tailscale();
+      const { monitor, pending } = await this.monitorStatus();
+      const connected = monitor === 'running';
+      if (connected) this.startFollower();
+      this.publish({
+        connected,
+        tailscale,
+        monitor,
+        pending,
+        since: persisted?.connected === connected ? (persisted.since ?? this.now()) : this.now(),
+      });
+    });
+  }
+
+  /** Rend l'état obtenu ; `connected` reste false si Tailscale ou le monitor manquent (la raison est dans l'état). */
+  async connect(): Promise<MeshState> {
+    await this.serial(async () => {
+      const { config } = this.deps;
+      let tailscale = await this.tailscale();
+      if (tailscale === 'stopped' && config.tailscale.manage) {
+        const up = await this.run(config.tailscale.bin, ['up']);
+        if (up.ok) this.tailscaleUpByUs = true;
+        else this.deps.log(`mesh : tailscale up a échoué : ${up.stderr.trim()}`);
+        tailscale = await this.tailscale();
+      }
+      if (tailscale !== 'running') {
+        this.publish({ connected: false, tailscale, since: this.sinceIf(false) });
+        return;
+      }
+      const start = await this.run(config.bin, [
+        'monitor',
+        'start',
+        '--as',
+        config.cell,
+        '--deliver',
+        'pull',
+      ]);
+      if (!start.ok) {
+        this.deps.log(
+          `mesh : swarph monitor start a échoué${start.spawnErrorCode ? ` (${start.spawnErrorCode})` : ''} : ${start.stderr.trim()}`,
+        );
+        this.publish({
+          connected: false,
+          tailscale,
+          monitor: start.spawnErrorCode === 'ENOENT' ? 'absent' : 'stopped',
+          since: this.sinceIf(false),
+        });
+        return;
+      }
+      const { monitor, pending } = await this.monitorStatus();
+      const connected = monitor === 'running';
+      if (connected) {
+        this.startFollower();
+        this.startRefresh();
+      }
+      this.publish({ connected, tailscale, monitor, pending, since: this.sinceIf(connected) });
+    });
+    return this.current();
+  }
+
+  async disconnect(): Promise<MeshState> {
+    await this.serial(async () => {
+      const { config } = this.deps;
+      this.stopFollower();
+      this.stopRefresh();
+      const stop = await this.run(config.bin, ['monitor', 'stop']);
+      if (!stop.ok) this.deps.log(`mesh : swarph monitor stop a échoué : ${stop.stderr.trim()}`);
+      if (config.tailscale.manage && this.tailscaleUpByUs) {
+        const down = await this.run(config.tailscale.bin, ['down']);
+        if (!down.ok) this.deps.log(`mesh : tailscale down a échoué : ${down.stderr.trim()}`);
+        this.tailscaleUpByUs = false;
+      }
+      const tailscale = await this.tailscale();
+      const { monitor, pending } = await this.monitorStatus();
+      this.publish({ connected: false, tailscale, monitor, pending, since: this.sinceIf(false) });
+    });
+    return this.current();
+  }
+
+  /** Toutes les 30 s pendant la connexion : `monitor status --json` ⇒ `pending`, `monitor`, et `mesh.state` si changement. */
+  async refresh(): Promise<MeshState> {
+    await this.serial(async () => {
+      const tailscale = await this.tailscale();
+      const { monitor, pending } = await this.monitorStatus();
+      const connected = this.state.connected && monitor === 'running' && tailscale === 'running';
+      if (this.state.connected && !connected) {
+        this.stopFollower();
+        this.stopRefresh();
+      }
+      this.publish({ connected, tailscale, monitor, pending, since: this.sinceIf(connected) });
+    });
+    return this.current();
+  }
+
+  /** Arrêt du daemon : on cesse de suivre, on ne touche ni au monitor ni à Tailscale (ils survivent au daemon). */
+  dispose(): void {
+    this.stopFollower();
+    this.stopRefresh();
+  }
+
+  /** Lecture forcée d'`inbox.log` (tests, ou après un réveil) ; rend le nombre de DM émis. */
+  tick(): number {
+    return this.follower?.tick() ?? 0;
+  }
+
+  private serial(task: () => Promise<void>): Promise<void> {
+    const next = this.busy.then(task, task);
+    this.busy = next.catch((err) => this.deps.log(`mesh : ${(err as Error).message}`));
+    return this.busy;
+  }
+
+  private now(): string {
+    return this.deps.now?.() ?? new Date().toISOString();
+  }
+
+  private sinceIf(connected: boolean): string | null {
+    const unchanged = this.state.connected === connected && this.state.since !== null;
+    return unchanged ? this.state.since : this.now();
+  }
+
+  private env(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, SWARPH_STATE: this.paths.stateRoot };
+    if (this.deps.config.gateway) env.MESH_GATEWAY_URL = this.deps.config.gateway;
+    return env;
+  }
+
+  private run(bin: string, args: string[]) {
+    return (this.deps.exec ?? meshExec)(bin, args, {
+      env: this.env(),
+      timeoutMs: this.deps.timeoutMs ?? 30_000,
+    });
+  }
+
+  // même exécuteur que swarph (environnement, délai, faux binaires en test)
+  private tailscale(): Promise<MeshTailscale> {
+    const bin = this.deps.config.tailscale.bin;
+    if (this.deps.tailscale) return this.deps.tailscale(bin);
+    return tailscaleState(bin, async (b, args) => {
+      const r = await this.run(b, args);
+      return { stdout: r.stdout, code: r.ok ? null : (r.spawnErrorCode ?? 'ERR') };
+    });
+  }
+
+  private async monitorStatus(): Promise<{ monitor: MeshMonitor; pending: number }> {
+    const r = await this.run(this.deps.config.bin, ['monitor', 'status', '--json']);
+    if (r.spawnErrorCode === 'ENOENT') return { monitor: 'absent', pending: 0 };
+    // `status` peut sortir en code 1 quand rien ne tourne, avec un JSON lisible quand même
+    return parseMonitorStatus(r.stdout);
+  }
+
+  private readPersisted(): Partial<MeshState> | null {
+    const rows = this.deps.db.prepare('SELECT k, v FROM mesh_state').all() as {
+      k: string;
+      v: string;
+    }[];
+    if (rows.length === 0) return null;
+    const out: Record<string, unknown> = {};
+    for (const r of rows) {
+      try {
+        out[r.k] = JSON.parse(r.v);
+      } catch {
+        // valeur illisible : ignorée
+      }
+    }
+    return out as Partial<MeshState>;
+  }
+
+  private cursorFromDb(): number {
+    const row = this.deps.db.prepare('SELECT MAX(id) AS m FROM mesh_inbox').get() as {
+      m: number | null;
+    };
+    return row.m ?? 0;
+  }
+
+  private startFollower(): void {
+    if (this.follower) return;
+    this.follower = new InboxFollower({
+      file: this.paths.inboxLog,
+      cursor: this.cursorFromDb(),
+      pollMs: this.deps.pollMs,
+      log: this.deps.log,
+      onDm: (dm) =>
+        this.deps.store.append({
+          source: 'swarph',
+          type: 'mesh.dm',
+          data: { ...dm, createdAt: dm.createdAt ?? undefined },
+        }),
+    });
+    this.follower.start();
+  }
+
+  private stopFollower(): void {
+    this.follower?.stop();
+    this.follower = null;
+  }
+
+  private startRefresh(): void {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setInterval(() => void this.refresh(), this.deps.refreshMs ?? 30_000);
+    this.refreshTimer.unref();
+  }
+
+  private stopRefresh(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+  }
+
+  /** Fusionne, et n'émet `mesh.state` que si quelque chose a changé. */
+  private publish(patch: Partial<MeshState>): void {
+    const next: MeshState = { ...this.state, ...patch };
+    if (JSON.stringify(next) === JSON.stringify(this.state)) return;
+    this.state = next;
+    this.deps.store.append({ source: 'swarph', type: 'mesh.state', data: { ...next } });
+  }
+}
