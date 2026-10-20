@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router';
+import type { MeshState } from '../../../src/shared/model.js';
 import type { DaemonLink } from '../data/types.js';
 
 const DAEMON_TEXT: Record<DaemonLink, string> = {
@@ -9,6 +10,43 @@ const DAEMON_TEXT: Record<DaemonLink, string> = {
 };
 
 export type EcranId = '1-1' | '1-2' | '1-3' | 'consignes' | 'reglages';
+
+/** La pastille « Mesh » de la barre (12.5) : absente quand `mesh.cell` n'est pas configuré. */
+export interface BarreMesh {
+  state: MeshState;
+  /** DM `question`/`unblock` pas encore vus */
+  aTraiter: number;
+  tailscaleManage: boolean;
+  /** un connect/disconnect est parti et son résultat n'est pas encore arrivé par `mesh.state` */
+  enCours: boolean;
+  onToggle: () => void;
+}
+
+const dureeDepuis = (iso: string, now = Date.now()) => {
+  const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
+  if (m < 1) return "moins d'une minute";
+  if (m < 60) return `${m} min`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h`;
+  return `${Math.round(h / 24)} j`;
+};
+
+/** Pourquoi « rejoindre » est impossible, ou null. Tailscale ne se monte que si `mesh.tailscale.manage` (D37). */
+export function meshBloque(m: BarreMesh): string | null {
+  if (m.state.connected || m.enCours) return null;
+  if (m.state.tailscale === 'absent')
+    return 'Tailscale introuvable : impossible de rejoindre le mesh';
+  if (m.state.tailscale === 'stopped' && !m.tailscaleManage)
+    return 'Tailscale est arrêté : le démarrer d’abord (ou mesh.tailscale.manage: true dans config.yaml)';
+  return null;
+}
+
+export function meshTexte(m: BarreMesh, now = Date.now()): string {
+  const s = m.state;
+  if (m.enCours) return s.connected ? 'mesh · déconnexion…' : 'mesh · connexion…';
+  if (s.connected) return `mesh · ${m.aTraiter} à traiter`;
+  return s.since ? `hors mesh depuis ${dureeDepuis(s.since, now)}` : 'hors mesh';
+}
 
 const LIENS = [
   { id: 'accueil', to: '/', label: 'Accueil' },
@@ -23,6 +61,7 @@ export function Barre({
   waiting,
   onNewTopic,
   onPalette,
+  mesh,
 }: {
   screen: EcranId;
   daemon: DaemonLink;
@@ -30,6 +69,7 @@ export function Barre({
   waiting: number;
   onNewTopic: () => void;
   onPalette: () => void;
+  mesh?: BarreMesh | null;
 }) {
   const n = (rest: string) => `${screen}.barre.${rest}`;
   const { pathname } = useLocation();
@@ -99,6 +139,30 @@ export function Barre({
         })}
       </nav>
       <div className="barre-droite">
+        {mesh && (
+          <button
+            className="bouton-mesh"
+            data-node={n('mesh')}
+            data-action={mesh.state.connected ? 'mesh.deconnecter' : 'mesh.connecter'}
+            type="button"
+            disabled={mesh.enCours || meshBloque(mesh) !== null}
+            title={
+              meshBloque(mesh) ??
+              (mesh.state.connected
+                ? `Quitter le mesh (cell ${mesh.state.cell})`
+                : `Rejoindre le mesh (cell ${mesh.state.cell})`)
+            }
+            onClick={mesh.onToggle}
+          >
+            <span
+              className={`point point--${mesh.state.connected ? 'ok' : mesh.enCours ? 'attente' : 'inactif'}`}
+              aria-hidden="true"
+            />
+            <span data-node={n('mesh.texte')} data-bind="mesh.etat">
+              {meshTexte(mesh)}
+            </span>
+          </button>
+        )}
         <span className="etat-daemon" data-node={n('daemon')}>
           <span
             className={`point point--${daemon === 'connecte' ? 'ok' : 'erreur'}`}

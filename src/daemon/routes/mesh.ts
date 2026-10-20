@@ -20,7 +20,7 @@ export function registerMeshRoutes(app: FastifyInstance, deps: MeshRouteDeps): v
 
   app.get('/api/mesh', async () => {
     const m = mesh();
-    return { state: m.current(), inbox: m.inbox() };
+    return { state: m.current(), inbox: m.inbox(), tailscaleManage: m.tailscaleManage };
   });
 
   for (const action of ['connect', 'disconnect'] as const) {

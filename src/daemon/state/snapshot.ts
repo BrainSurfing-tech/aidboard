@@ -131,6 +131,8 @@ export async function buildSnapshot(
     agents,
     actions,
     // 12.4 : présent seulement quand une cell est configurée (D39)
-    ...(mesh && { mesh: { state: mesh.current(), inbox: mesh.inbox() } }),
+    ...(mesh && {
+      mesh: { state: mesh.current(), inbox: mesh.inbox(), tailscaleManage: mesh.tailscaleManage },
+    }),
   };
 }

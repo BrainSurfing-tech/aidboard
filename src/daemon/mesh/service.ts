@@ -73,6 +73,11 @@ export class MeshService {
     return this.paths.inboxLog;
   }
 
+  /** l'UI en a besoin pour expliquer pourquoi « rejoindre » est impossible quand Tailscale est arrêté (12.5) */
+  get tailscaleManage(): boolean {
+    return this.deps.config.tailscale.manage;
+  }
+
   /** La boîte projetée (12.4) : les plus récents d'abord, bornée. */
   inbox(limit = 200): MeshDm[] {
     const rows = this.deps.db

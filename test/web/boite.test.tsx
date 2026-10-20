@@ -3,7 +3,7 @@ import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { Agent } from '../../src/shared/model.js';
+import type { Agent, MeshDm, MeshState } from '../../src/shared/model.js';
 import { Boite } from '../../web/src/ecrans/Boite.js';
 import { Sujet } from '../../web/src/ecrans/Sujet.js';
 import { agent, json, setup, snapshot, topic, ws } from './helpers.js';
@@ -181,4 +181,114 @@ test('« Ouvrir le terminal → » ouvre le sujet sur l’onglet de cet agent', 
     expect(screen.getByTestId('term-ag_err').getAttribute('data-visible')).toBe('true'),
   );
   expect(screen.getByTestId('term-ag_pause').getAttribute('data-visible')).toBe('false');
+});
+
+// 12.5 : section « Mesh · <cell> » et pastille de la barre. Le contenu d'un DM est du texte brut (D30).
+const dm = (over: Partial<MeshDm>): MeshDm => ({
+  id: 1,
+  threadId: null,
+  from: 'mesh-gw',
+  to: 'morzu-mac',
+  kind: 'fyi',
+  content: 'x',
+  createdAt: at(1),
+  replyTo: null,
+  obligationId: null,
+  seenAt: null,
+  ...over,
+});
+const meshEtat = (over: Partial<MeshState> = {}, tailscaleManage = false) => ({
+  state: {
+    connected: true,
+    tailscale: 'running' as const,
+    monitor: 'running' as const,
+    pending: 0,
+    since: at(30),
+    cell: 'morzu-mac',
+    ...over,
+  },
+  inbox: [
+    dm({ id: 11, kind: 'question', content: 'Tu lis le board ?', threadId: 'thr_abcdefghij' }),
+    dm({ id: 12, kind: 'status', content: 'monitor relancé' }),
+    dm({ id: 13, kind: 'unblock', content: '<b>pas du HTML</b>\n**ni du Markdown**' }),
+    dm({ id: 14, kind: 'fyi', content: 'déjà lu', seenAt: at(0) }),
+    dm({ id: 15, kind: 'answer', content: 'oui', from: 'peer-a' }),
+  ],
+  tailscaleManage,
+});
+
+test('mesh : « À traiter » (les plus anciens d’abord) puis « Informations », contenu en texte brut, « Vu »', async () => {
+  const h = setup(<Boite />, { ...etat(), mesh: meshEtat() });
+  await screen.findByText('Autoriser Bash(npm test) ?');
+  expect(node('1-2.mesh')?.getAttribute('aria-label')).toBe('Mesh · morzu-mac');
+  expect(text('1-2.mesh.compte')).toBe('4');
+  expect(text('1-2.mesh.etat')).toBe('connecté');
+  expect(
+    [...document.querySelectorAll('[data-node^="1-2.mesh.groupe-"] > .groupe-entete h3')].map(
+      (g) => g.textContent,
+    ),
+  ).toEqual(['À traiter', 'Informations']);
+  expect([1, 2, 3, 4].map((n) => text(`1-2.mesh.dm-${n}.type`))).toEqual([
+    'Question',
+    'Déblocage',
+    'Réponse',
+    'Statut',
+  ]);
+  expect(text('1-2.mesh.dm-1.emetteur')).toBe('mesh-gw');
+  expect(text('1-2.mesh.dm-1.fil')).toBe('fil thr_abcd');
+  expect(text('1-2.mesh.dm-3.emetteur')).toBe('peer-a');
+  // le DM vu n'est plus là
+  expect(document.body.textContent).not.toContain('déjà lu');
+  // texte brut : la balise est affichée telle quelle, jamais interprétée
+  const contenu = node('1-2.mesh.dm-2.contenu')!;
+  expect(contenu.querySelector('b')).toBeNull();
+  expect(contenu.querySelector('pre')?.textContent).toBe('<b>pas du HTML</b>\n**ni du Markdown**');
+  expect(contenu.textContent).toContain('donnée d’un pair du mesh');
+  await userEvent.click(node('1-2.mesh.dm-1.vu')!);
+  expect(h.calls.some((c) => c.method === 'POST' && c.url === '/api/mesh/dm/11/seen')).toBe(true);
+  // la pastille compte les question/unblock non vus
+  expect(text('1-2.barre.mesh.texte')).toBe('mesh · 2 à traiter');
+  expect(node('1-2.barre.mesh')?.getAttribute('data-action')).toBe('mesh.deconnecter');
+  await userEvent.click(node('1-2.barre.mesh')!);
+  expect(h.calls.some((c) => c.method === 'POST' && c.url === '/api/mesh/disconnect')).toBe(true);
+  expect(text('1-2.barre.mesh.texte')).toBe('mesh · déconnexion…');
+});
+
+test('mesh hors ligne : « hors mesh depuis », connexion au clic ; Tailscale arrêté sans manage ⇒ bouton désactivé', async () => {
+  const h = setup(<Boite />, {
+    ...snapshot({ workspaces: [ws()], topics: [topic()] }),
+    mesh: { ...meshEtat({ connected: false, monitor: 'stopped' }), inbox: [] },
+  });
+  await screen.findByText(/Rien à traiter/);
+  expect(text('1-2.mesh.vide')).toBe('Aucun message à lire.');
+  expect(text('1-2.mesh.etat')).toBe('hors mesh');
+  expect(text('1-2.barre.mesh.texte')).toBe('hors mesh depuis 30 min');
+  expect(node('1-2.barre.mesh')?.hasAttribute('disabled')).toBe(false);
+  await userEvent.click(node('1-2.barre.mesh')!);
+  expect(h.calls.some((c) => c.method === 'POST' && c.url === '/api/mesh/connect')).toBe(true);
+  expect(text('1-2.barre.mesh.texte')).toBe('mesh · connexion…');
+  cleanup();
+  setup(<Boite />, {
+    ...snapshot({ workspaces: [ws()], topics: [topic()] }),
+    mesh: meshEtat({ connected: false, tailscale: 'stopped', monitor: 'stopped', since: null }),
+  });
+  await screen.findByText(/Rien à traiter/);
+  expect(text('1-2.barre.mesh.texte')).toBe('hors mesh');
+  expect(node('1-2.barre.mesh')?.hasAttribute('disabled')).toBe(true);
+  expect(node('1-2.barre.mesh')?.getAttribute('title')).toContain('Tailscale est arrêté');
+  cleanup();
+  // avec manage: true, A-I-D monte Tailscale lui-même : le bouton reste actif
+  setup(<Boite />, {
+    ...snapshot({ workspaces: [ws()], topics: [topic()] }),
+    mesh: meshEtat({ connected: false, tailscale: 'stopped', monitor: 'stopped' }, true),
+  });
+  await screen.findByText(/Rien à traiter/);
+  expect(node('1-2.barre.mesh')?.hasAttribute('disabled')).toBe(false);
+});
+
+test('sans mesh configuré : ni section ni pastille', async () => {
+  setup(<Boite />, etat());
+  await screen.findByText('Autoriser Bash(npm test) ?');
+  expect(node('1-2.mesh')).toBeNull();
+  expect(node('1-2.barre.mesh')).toBeNull();
 });

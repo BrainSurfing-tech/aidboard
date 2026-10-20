@@ -8,5 +8,5 @@ export interface StateSnapshot {
   agents: Agent[];
   actions: ActionRun[];
   /** présent seulement quand `mesh.cell` est configuré (chantier 12) */
-  mesh?: { state: MeshState; inbox: MeshDm[] };
+  mesh?: { state: MeshState; inbox: MeshDm[]; tailscaleManage: boolean };
 }

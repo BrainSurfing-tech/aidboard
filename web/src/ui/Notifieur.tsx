@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import type { Agent } from '../../../src/shared/model.js';
 import { useAid } from '../data/useAidState.js';
+import { A_TRAITER } from './Layout.js';
 
 const TITRE = 'A-I-D';
 
@@ -41,6 +42,24 @@ export function Notifieur() {
       n.onclick = () => {
         window.focus();
         if (topicId) navigate(`/sujets/${topicId}?agent=${a.id}`);
+        n.close();
+      };
+    }
+    // mesh (12.5) : seuls `question` et `unblock` sollicitent ; le contenu d'un pair n'est que du texte
+    for (const dm of state.mesh?.inbox ?? []) {
+      if (dm.seenAt || !A_TRAITER.has(dm.kind)) continue;
+      const k = `mesh:${dm.id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (premier || document.visibilityState !== 'hidden') continue;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
+      const n = new Notification(`${dm.from} te sollicite sur le mesh`, {
+        body: dm.content.split('\n')[0]?.slice(0, 200) ?? '',
+        tag: k,
+      });
+      n.onclick = () => {
+        window.focus();
+        navigate('/boite');
         n.close();
       };
     }
