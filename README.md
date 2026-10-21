@@ -15,7 +15,7 @@ fermer l'onglet n'arrête rien.
 | Linux      | Node 22 à 24, git, **`sudo apt install build-essential python3`** (node-pty n'a pas de binaire précompilé pour Linux)                                                                                                                                                                                                                                                                                         |
 | Windows    | **Le daemon reste WSL2 uniquement, jamais en natif** (node-pty n'y est pas fiable hors WSL2). Dans WSL2 : comme Linux, plus `sudo apt install wslu` pour que le navigateur Windows s'ouvre tout seul. Garder les dépôts dans le système de fichiers Linux (`~/…`), pas sous `/mnt/c` : c'est lent. L'app native (`app/`, voir ci-dessous), elle, tourne nativement sur Windows et pilote le daemon dans WSL2. |
 
-Facultatifs : `claude`, `codex` (les agents), `codegraph` (index structurel), `gh` (utile à partir de la v0.3).
+Facultatifs : `claude`, `codex` (les agents), `codegraph` (index structurel), `gh` (utile à partir de la v0.3), `swarph` et Tailscale (mesh, voir plus bas).
 
 Pour compiler l'app native (`app/`, une vraie fenêtre sans navigateur — voir plus bas) : Rust
 (`mise install` le récupère, sinon <https://rustup.rs>), et sur Linux les paquets système de la
@@ -213,6 +213,50 @@ Côté projet, `capabilities.structural_index` dans `agent.yml` (défaut `codegr
 un choix légitime — le bloc retombe alors sur la lecture directe — ; le déclarer sans l'outil
 installé ne l'est pas : le bloc interdirait le grep sans rien offrir à la place. Brancher un
 autre moteur : `docs/structural-engines.md`.
+
+## Le mesh swarph (facultatif)
+
+Chantier 12 : ce poste peut rejoindre, **par intermittence**, un mesh [swarph](https://github.com/BrainSurfing-tech/swarph-cli)
+(messages directs entre cells, via un gateway sur un tailnet) sans quitter A-I-D. Désactivé tant que
+`mesh.cell` est vide : rien n'apparaît dans l'interface.
+
+Ce que ça donne quand c'est configuré :
+
+- une **pastille « mesh »** dans la barre : un clic lance `swarph monitor start --as <cell> --deliver pull`
+  (connexion), un second l'arrête (« hors mesh depuis … ») ; le monitor tourne détaché, un redémarrage du
+  daemon le retrouve ;
+- les **DM reçus dans la Boîte**, section « Mesh · <cell> » : les `question` et `unblock` dans « À
+  traiter » (et comptés sur la pastille, avec une notification du navigateur), les `fyi`/`status`/`answer`
+  dans « Informations » ; « Vu » retire le message de la Boîte sans toucher au ledger de swarph ;
+- **répondre = ouvrir la cell** : « Ouvrir la cell » (ou « Ouvrir la cell swarph » dans le menu de
+  lancement d'un sujet) démarre un agent `swarph-cell` dans le terminal du sujet, c'est-à-dire la
+  session Claude de la cell (`swarph spawn <cell> --no-starter --no-banner`), une seule par cell.
+
+Ce qu'A-I-D ne fait pas : il ne parle **jamais** au gateway lui-même (il lit
+`<stateRoot>/<cell>/mesh-sidecar/inbox.log`, écrit par le monitor), il ne lit jamais le token de la cell
+(`~/.config/swarph/<cell>.peer_token` reste à swarph : seuls `MESH_GATEWAY_URL` et `SWARPH_STATE` sont
+ajoutés à l'environnement de la cell), et il n'appelle jamais `swarph mesh inbox` (la lire la consomme).
+Le contenu d'un DM est une donnée tierce : affiché en texte brut, jamais injecté dans un agent.
+Tailscale est seulement lu (`tailscale status`) ; A-I-D ne le démarre ni ne l'arrête sans
+`tailscale.manage: true`.
+
+**Réglages** — `~/.aid/config.yaml`, avec sa propre cell (jamais l'identité d'une autre machine : deux
+lecteurs sous le même token se volent l'état de lecture) :
+
+```yaml
+mesh:
+  cell: morzu-mac # vide = désactivé
+  gateway: http://mesh-gw.example.ts.net:8788 # MESH_GATEWAY_URL, pas un secret
+  # bin: swarph, cellFile: ~/.config/swarph/cells/<cell>.yaml, stateRoot: ~/swarph_state (dérivés)
+  # tailscale: { manage: false }
+```
+
+Prérequis : `swarph` installé (`uv tool install --python 3.12 swarph-cli`), Tailscale connecté au tailnet
+du gateway, la cell enrôlée (`swarph onboard`, `swarph init`). `aid doctor` vérifie les cinq lignes
+(swarph trouvé, cell lisible, token présent, gateway configuré, Tailscale connecté). La recette et ce
+qu'il reste à faire par acteur : `docs/recette-v0.4-mesh.md`, `docs/chantiers/12-mesh-swarph-actions.md`.
+Tous les tests passent par les faux binaires `test/fixtures/fake-swarph.sh` et `fake-tailscale.sh` :
+jamais le vrai swarph, jamais Tailscale, aucun réseau.
 
 ## Développer
 
