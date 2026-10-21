@@ -13,7 +13,16 @@ import { LogWriter } from './log.js';
 import { type Estimate, estimate } from './heuristic.js';
 import { TerminalMirror } from './mirror.js';
 import { getPty } from './native.js';
-import { agentCommand, agentEnv, hookEnv, resolveOnPath, type SpawnKind } from './spawn.js';
+import {
+  agentCommand,
+  agentEnv,
+  hookEnv,
+  meshEnv,
+  resolveOnPath,
+  type SpawnKind,
+} from './spawn.js';
+import { meshPaths } from '../mesh/paths.js';
+import { homedir } from 'node:os';
 
 const ulid = monotonicFactory();
 const INITIAL = { cols: 120, rows: 32 };
@@ -185,7 +194,21 @@ export class AgentManager {
       .get(o.topicId) as { id: string } | undefined;
     if (!run) throw new AidHttpError(409, 'ce sujet n’a pas de run');
 
-    const [bin = '', ...args] = agentCommand(o.kind, process.env);
+    // 12.6 : une session par cell (session-id persistant côté swarph) ; et pas de cell sans `mesh.cell`
+    let meshSpawn: { bin: string; cellFile: string } | undefined;
+    if (o.kind === 'swarph-cell') {
+      if (!config.mesh.cell)
+        throw new AidHttpError(409, 'mesh désactivé : `mesh.cell` vide dans config.yaml');
+      const deja = this.liveAgents().find((a) => a.kind === 'swarph-cell');
+      if (deja)
+        throw new AidHttpError(
+          409,
+          `la cell ${config.mesh.cell} est déjà ouverte (agent ${deja.id}) : une seule session par cell`,
+        );
+      const p = meshPaths(config.mesh, process.env.HOME ?? homedir());
+      meshSpawn = { bin: config.mesh.bin, cellFile: p.cellFile };
+    }
+    const [bin = '', ...args] = agentCommand(o.kind, process.env, meshSpawn);
     const file = resolveOnPath(bin, process.env.PATH ?? '');
     if (!file) throw new AidHttpError(422, `${bin} introuvable dans le PATH du daemon`);
 
@@ -199,6 +222,7 @@ export class AgentManager {
       AID_SPOOL: paths.spool,
       ...hookEnv(),
     });
+    Object.assign(env, meshEnv(o.kind, config.mesh));
     let pty: IPty;
     try {
       pty = getPty().spawn(file, args, {

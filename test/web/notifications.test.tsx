@@ -2,7 +2,7 @@
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import type { Agent } from '../../src/shared/model.js';
+import type { Agent, MeshDm } from '../../src/shared/model.js';
 import { Notifieur } from '../../web/src/ui/Notifieur.js';
 import { agent, type Harness, setup, snapshot, topic, ws } from './helpers.js';
 
@@ -120,4 +120,67 @@ test('le titre de l’onglet compte les agents qui attendent', async () => {
   await waitFor(() => expect(document.title).toBe('(2) A-I-D'));
   await next(h, [demande('p1', { pausedAt: 't' })]);
   expect(document.title).toBe('A-I-D');
+});
+
+// 12.5 : un DM `question`/`unblock` du mesh notifie, une fois ; les autres kinds et les DM vus jamais
+const dm = (id: number, kind: MeshDm['kind'], over: Partial<MeshDm> = {}): MeshDm => ({
+  id,
+  threadId: null,
+  from: 'mesh-gw',
+  to: 'morzu-mac',
+  kind,
+  content: `DM ${id}\nseconde ligne`,
+  createdAt: 't',
+  replyTo: null,
+  obligationId: null,
+  seenAt: null,
+  ...over,
+});
+const mesh = (inbox: MeshDm[]) => ({
+  state: {
+    connected: true,
+    tailscale: 'running' as const,
+    monitor: 'running' as const,
+    pending: 0,
+    since: 't',
+    cell: 'morzu-mac',
+  },
+  inbox,
+  tailscaleManage: false,
+});
+
+test('mesh : question et unblock notifient, fyi/status/answer et les DM vus non ; le clic mène à la Boîte', async () => {
+  const h = setup(
+    <>
+      <Notifieur />
+      <Routes>
+        <Route path="*" element={<Lieu />} />
+      </Routes>
+    </>,
+    { ...etat([]), mesh: mesh([dm(1, 'question')]) },
+  );
+  await waitFor(() => expect(h.client.getSnapshot().state).not.toBeNull());
+  // ce qui est déjà là au chargement ne notifie pas
+  expect(FakeNotification.all).toHaveLength(0);
+  h.state = {
+    ...etat([]),
+    mesh: mesh([
+      dm(1, 'question'),
+      dm(2, 'fyi'),
+      dm(3, 'unblock'),
+      dm(4, 'status'),
+      dm(5, 'answer'),
+      dm(6, 'question', { seenAt: 'vu' }),
+    ]),
+  };
+  await act(() => h.client.refresh());
+  expect(FakeNotification.all.map((n) => [n.title, n.options.body, n.options.tag])).toEqual([
+    ['mesh-gw te sollicite sur le mesh', 'DM 3', 'mesh:3'],
+  ]);
+  await act(() => h.client.refresh());
+  expect(FakeNotification.all).toHaveLength(1);
+  const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+  act(() => FakeNotification.all[0]!.onclick!());
+  expect(focus).toHaveBeenCalled();
+  expect(screen.getByTestId('lieu').textContent).toBe('/boite');
 });

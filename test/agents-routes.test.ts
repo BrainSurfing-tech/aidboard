@@ -125,3 +125,11 @@ test('arrêter le daemon arrête tous les agents avec la raison daemon_stop', as
   expect(rows).toEqual([{ status: 'stopped' }, { status: 'stopped' }]);
   expect(reasons.map((r) => JSON.parse(r.data).reason)).toEqual(['daemon_stop', 'daemon_stop']);
 });
+
+test('kind swarph-cell : accepté par le schéma, 409 tant que mesh.cell n’est pas configuré', async () => {
+  const { topicId } = await boot();
+  const r = await post({ topicId, kind: 'swarph-cell' });
+  expect(r.statusCode).toBe(409);
+  expect(r.json().error).toContain('mesh désactivé');
+  expect((await state()).agents).toEqual([]);
+});

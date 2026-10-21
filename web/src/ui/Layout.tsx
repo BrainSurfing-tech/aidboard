@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useContext, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
+import type { MeshDmKind } from '../../../src/shared/model.js';
 import { useAid } from '../data/useAidState.js';
 import { NouveauSujet } from '../dialogues/NouveauSujet.js';
 import { NouveauWorkspace } from '../dialogues/NouveauWorkspace.js';
@@ -8,6 +9,8 @@ import { isPaletteShortcut, Palette, type PaletteItem } from './Palette.js';
 import { Shell } from './Shell.js';
 
 type Dialog = 'none' | 'workspace' | 'sujet';
+/** les kinds de DM qui demandent quelque chose (12.5) : partagé avec la Boîte et le Notifieur */
+export const A_TRAITER = new Set<MeshDmKind>(['question', 'unblock']);
 const LayoutCtx = createContext<{
   openNewTopic: (workspaceId?: string) => void;
   openNewWorkspace: () => void;
@@ -20,7 +23,7 @@ export function useLayout() {
 }
 
 export function Layout({ screen, children }: { screen: EcranId; children: ReactNode }) {
-  const { daemon, state } = useAid();
+  const { daemon, state, call } = useAid();
   const navigate = useNavigate();
   const [dialog, setDialog] = useState<Dialog>('none');
   const [palette, setPalette] = useState(false);
@@ -49,6 +52,35 @@ export function Layout({ screen, children }: { screen: EcranId; children: ReactN
     setDialog('workspace');
   };
   const waiting = state?.agents.filter((a) => a.status === 'needs_input').length ?? 0;
+  // Pastille mesh (12.5) : connect/disconnect répondent 202, le résultat arrive par `mesh.state`. En attendant,
+  // « connexion… » ; si rien n'arrive (échec silencieux), la pastille se relâche au bout de 30 s.
+  const mesh = state?.mesh;
+  const [cible, setCible] = useState<{ vers: boolean } | null>(null);
+  const enCours = cible !== null && mesh?.state.connected !== cible.vers;
+  useEffect(() => {
+    if (cible === null) return;
+    const t = setTimeout(() => setCible(null), 30_000);
+    return () => clearTimeout(t);
+  }, [cible]);
+  const basculerMesh = async () => {
+    if (!mesh) return;
+    const vers = !mesh.state.connected;
+    setCible({ vers });
+    try {
+      await call('POST', vers ? '/api/mesh/connect' : '/api/mesh/disconnect');
+    } catch {
+      setCible(null);
+    }
+  };
+  const barreMesh = mesh
+    ? {
+        state: mesh.state,
+        aTraiter: mesh.inbox.filter((d) => !d.seenAt && A_TRAITER.has(d.kind)).length,
+        tailscaleManage: mesh.tailscaleManage,
+        enCours,
+        onToggle: () => void basculerMesh(),
+      }
+    : null;
   const names = new Map(state?.workspaces.map((w) => [w.id, w.name]));
   const items: PaletteItem[] = [
     ...(state?.topics ?? []).map((t) => ({
@@ -78,6 +110,7 @@ export function Layout({ screen, children }: { screen: EcranId; children: ReactN
           waiting={waiting}
           onNewTopic={() => openNewTopic()}
           onPalette={() => setPalette(true)}
+          mesh={barreMesh}
         />
         {children}
         {palette && <Palette items={items} onClose={() => setPalette(false)} />}

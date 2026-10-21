@@ -15,7 +15,15 @@ export interface TopicIndex {
 export type AgentStatus =
   'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'stopped';
 export type AgentKind =
-  'claude' | 'codex' | 'cursor' | 'shell' | 'swairm-drone' | 'swairm-queen' | 'grokbot-cloud';
+  | 'claude'
+  | 'codex'
+  | 'cursor'
+  | 'shell'
+  | 'swairm-drone'
+  | 'swairm-queen'
+  | 'grokbot-cloud'
+  /** la cell swarph du mesh, ouverte en PTY (12.6, D38) */
+  | 'swarph-cell';
 export type ActionState = 'running' | 'succeeded' | 'needs_human' | 'failed';
 export type StatusSource = 'hook' | 'heuristic' | 'daemon';
 export type NeedsInputReason =
@@ -150,4 +158,44 @@ export interface UpdateInfo {
   /** ce qui est disponible : une version (mode release) ou un sha d'origin/main (mode repo) ; null sinon */
   latest: string | null;
   lastError: string | null;
+}
+
+/** Mesh swarph (chantier 12, D36) : ce que le daemon projette d'`inbox.log` et de `monitor status`. */
+export type MeshDmKind = 'fyi' | 'status' | 'question' | 'answer' | 'unblock';
+export const MESH_DM_KINDS: readonly MeshDmKind[] = [
+  'fyi',
+  'status',
+  'question',
+  'answer',
+  'unblock',
+];
+
+export interface MeshDm {
+  /** id swarph, global au gateway et croissant : c'est lui qui rend `mesh.dm` idempotent */
+  id: number;
+  threadId: string | null;
+  from: string;
+  to: string;
+  kind: MeshDmKind;
+  /** donnée d'un pair : texte brut, jamais rendu en Markdown ni injecté dans un agent */
+  content: string;
+  createdAt: string;
+  replyTo: number | null;
+  obligationId: string | null;
+  /** marque locale posée dans A-I-D (12.4), jamais le `read_at` du gateway */
+  seenAt: string | null;
+}
+
+export type MeshTailscale = 'running' | 'stopped' | 'absent';
+export type MeshMonitor = 'running' | 'stopped' | 'stale' | 'absent';
+
+export interface MeshState {
+  connected: boolean;
+  tailscale: MeshTailscale;
+  monitor: MeshMonitor;
+  /** DM en attente côté monitor (`sinks[].pending`) */
+  pending: number;
+  /** depuis quand l'état `connected` courant tient (D41 : « hors mesh depuis <durée> ») */
+  since: string | null;
+  cell: string;
 }

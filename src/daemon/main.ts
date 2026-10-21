@@ -1,4 +1,5 @@
 import { rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { AddressInfo } from 'node:net';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,7 @@ import { MemoryMirror } from './memory/mirror.js';
 import { MemoryWorker } from './memory/worker.js';
 import { MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
+import { MeshService } from './mesh/service.js';
 import { acquireLock } from './lock.js';
 import { ensureHome, resolvePaths } from './paths.js';
 import { reconcile } from './reconcile.js';
@@ -53,6 +55,8 @@ export interface DaemonHandle {
   store: EventStore;
   agents: AgentManager;
   memory: MemoryService;
+  /** 12.3 : null quand `mesh.cell` est vide */
+  mesh: MeshService | null;
   /** 13.4 : ce que le watcher sait d'une mise à jour (null : rien, ou vérification coupée) */
   updates: () => WatchStatus | null;
   stop(): Promise<void>;
@@ -207,6 +211,17 @@ export async function startDaemon(
       timeoutMs: config.structural.timeoutMs,
       exclude: config.structural.exclude,
     });
+    // 12.3 : le service mesh existe seulement si une cell est configurée (D39) ; jamais de connexion automatique
+    const mesh = config.mesh.cell
+      ? new MeshService({
+          config: config.mesh,
+          // le HOME de l'utilisateur (~/.config/swarph, ~/swarph_state), pas AID_HOME
+          home: process.env.HOME ?? homedir(),
+          db: opened,
+          store,
+          log,
+        })
+      : null;
     // 08.8 : construit ici, et non dans buildServer, pour lancer le rattrapage après `listen`
     const indexer = new Indexer({ store, paths, engine: structural });
     const app = await buildServer({
@@ -220,6 +235,7 @@ export async function startDaemon(
       paths,
       structural,
       indexer,
+      mesh,
       requestStop: opts.onStopRequested,
       requestUpdate: opts.onUpdateRequested,
       requestCycle: opts.onCycleRequested,
@@ -251,6 +267,8 @@ export async function startDaemon(
     void resumeFromManifest(agents, paths);
     // 08.8 : même esprit — le moteur rattrape chaque sujet en tâche de fond, un à la fois
     void rattraperIndex({ db: opened, store, engine: structural, indexer, log });
+    // 12.3 : relit l'état d'un monitor détaché qui aurait survécu, sans le relancer
+    void mesh?.init();
     return {
       app,
       port,
@@ -259,8 +277,10 @@ export async function startDaemon(
       store,
       agents,
       memory,
+      mesh,
       updates: () => updates?.status() ?? null,
       async stop() {
+        mesh?.dispose();
         await agents.stopAll('daemon_stop', 5000);
         agents.dispose();
         updates?.dispose();

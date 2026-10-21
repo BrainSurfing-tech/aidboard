@@ -1,9 +1,10 @@
 import { type ReactNode, useState } from 'react';
-import { Link } from 'react-router';
-import type { Agent, Topic, Workspace } from '../../../src/shared/model.js';
+import { Link, useNavigate } from 'react-router';
+import type { Agent, MeshDm, Topic, Workspace } from '../../../src/shared/model.js';
+import type { StateSnapshot } from '../../../src/shared/state.js';
 import { useAid } from '../data/useAidState.js';
 import { depuis } from '../ui/depuis.js';
-import { Layout, useLayout } from '../ui/Layout.js';
+import { A_TRAITER, Layout, useLayout } from '../ui/Layout.js';
 import { agentView, isAlive, type StatusView, type Tone } from '../ui/Statut.js';
 
 type Groupe = Exclude<Tone, 'inactif'>;
@@ -168,6 +169,240 @@ function Article({ n, e }: { n: number; e: Element }) {
         </p>
       )}
     </article>
+  );
+}
+
+const KIND_LABEL: Record<MeshDm['kind'], string> = {
+  question: 'Question',
+  unblock: 'Déblocage',
+  fyi: 'Info',
+  status: 'Statut',
+  answer: 'Réponse',
+};
+
+/**
+ * « Ouvrir la cell » (12.6) : la cell vit déjà ⇒ son terminal ; sinon choisir le sujet actif dans le worktree
+ * duquel elle s'ouvre (une seule session par cell, le daemon refuse la seconde en 409).
+ */
+function OuvrirCell({ n, state }: { n: number; state: StateSnapshot }) {
+  const { call } = useAid();
+  const navigate = useNavigate();
+  const [choix, setChoix] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const id = (rest = '') => `1-2.mesh.dm-${n}.cell${rest ? `.${rest}` : ''}`;
+  const cell = state.agents.find((a) => a.kind === 'swarph-cell' && isAlive(a));
+  if (cell) {
+    const topicId = state.runs.find((r) => r.id === cell.runId)?.topicId ?? '';
+    return (
+      <Link
+        className="lien"
+        data-node={id()}
+        data-action="cell.ouvrir"
+        to={`/sujets/${topicId}?agent=${cell.id}`}
+      >
+        Ouvrir la cell →
+      </Link>
+    );
+  }
+  const actifs = state.topics.filter((t) => t.state === 'active' && !t.worktreeMissing);
+  const lancer = async (topicId: string) => {
+    setBusy(true);
+    setErreur(null);
+    try {
+      const a = await call<Agent>('POST', '/api/agents', { topicId, kind: 'swarph-cell' });
+      navigate(`/sujets/${topicId}?agent=${a.id}`);
+    } catch (err) {
+      setErreur(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button
+        className="bouton"
+        data-node={id()}
+        data-action="cell.ouvrir"
+        type="button"
+        aria-expanded={choix}
+        disabled={busy || actifs.length === 0}
+        title={
+          actifs.length === 0
+            ? 'Aucun sujet actif : la cell s’ouvre dans le worktree d’un sujet'
+            : undefined
+        }
+        onClick={() => setChoix(!choix)}
+      >
+        Ouvrir la cell
+      </button>
+      {choix && (
+        <span className="groupe-filtres" role="group" aria-label="Dans quel sujet ?">
+          {actifs.map((t, i) => (
+            <button
+              key={t.id}
+              className="puce-filtre"
+              data-node={id(`sujet-${i + 1}`)}
+              data-action="cell.lancer"
+              type="button"
+              disabled={busy}
+              onClick={() => void lancer(t.id)}
+            >
+              {t.branch}
+            </button>
+          ))}
+        </span>
+      )}
+      {erreur && (
+        <p className="message-erreur" role="alert" data-node={id('erreur')}>
+          {erreur}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Un DM du mesh (12.5). Le contenu est une donnée d'un pair : rendu en texte brut dans un bloc encadré,
+ * jamais interprété (même raison que D30). « Vu » le retire de la Boîte (12.4) ; « Ouvrir la cell » arrive en 12.6.
+ */
+function ArticleMesh({ n, dm, state }: { n: number; dm: MeshDm; state: StateSnapshot }) {
+  const { call, refresh } = useAid();
+  const [busy, setBusy] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const id = (rest: string) => `1-2.mesh.dm-${n}.${rest}`;
+  const urgent = A_TRAITER.has(dm.kind);
+  const vu = async () => {
+    setBusy(true);
+    setErreur(null);
+    try {
+      await call('POST', `/api/mesh/dm/${dm.id}/seen`);
+      // la marque « vu » est locale (12.4) : aucun événement ne la porte, l'instantané se relit ici
+      await refresh();
+    } catch (err) {
+      setErreur(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <article
+      className={`element${urgent ? ' element--attente' : ''}`}
+      data-node={`1-2.mesh.dm-${n}`}
+      aria-label={`${dm.from} · ${KIND_LABEL[dm.kind]}`}
+    >
+      <div className="element-entete">
+        <span
+          className={`badge${urgent ? ' badge--attente' : ''}`}
+          data-node={id('type')}
+          data-bind="mesh.kind"
+        >
+          {KIND_LABEL[dm.kind]}
+        </span>
+        <span className="identifiant" data-node={id('emetteur')} data-bind="mesh.emetteur">
+          {dm.from}
+        </span>
+        {dm.threadId && (
+          <span className="texte-faible" data-node={id('fil')} data-bind="mesh.fil">
+            fil {dm.threadId.slice(0, 8)}
+          </span>
+        )}
+        <span className="element-moment" data-node={id('moment')} data-bind="evenement.moment">
+          {depuis(dm.createdAt)}
+        </span>
+      </div>
+      <div className="mesh-contenu" data-node={id('contenu')}>
+        <span className="texte-faible" data-node={id('contenu.origine')}>
+          donnée d’un pair du mesh
+        </span>
+        <pre className="mesh-texte" data-bind="mesh.contenu">
+          {dm.content}
+        </pre>
+      </div>
+      <div className="element-actions">
+        <button
+          className="bouton"
+          data-node={id('vu')}
+          data-action="mesh.vu"
+          type="button"
+          disabled={busy}
+          onClick={() => void vu()}
+        >
+          Vu
+        </button>
+        <OuvrirCell n={n} state={state} />
+      </div>
+      {erreur && (
+        <p className="message-erreur" role="alert" data-node={id('erreur')}>
+          {erreur}
+        </p>
+      )}
+    </article>
+  );
+}
+
+/** La section Mesh de la Boîte : « À traiter » (question, unblock) puis « Informations » ; les DM vus n'y sont plus. */
+function SectionMesh({ state }: { state: StateSnapshot }) {
+  const mesh = state.mesh!;
+  const nonVus = mesh.inbox.filter((d) => !d.seenAt);
+  const groupes = [
+    {
+      id: 'a-traiter',
+      titre: 'À traiter',
+      tone: 'attente',
+      // les plus anciens d'abord : ce sont eux qui bloquent un pair depuis le plus longtemps
+      items: nonVus.filter((d) => A_TRAITER.has(d.kind)).sort((x, y) => x.id - y.id),
+    },
+    {
+      id: 'informations',
+      titre: 'Informations',
+      tone: 'inactif',
+      items: nonVus.filter((d) => !A_TRAITER.has(d.kind)).sort((x, y) => y.id - x.id),
+    },
+  ].filter((g) => g.items.length > 0);
+  const numero = new Map(groupes.flatMap((g) => g.items).map((d, i) => [d.id, i + 1]));
+  return (
+    <section className="groupe" data-node="1-2.mesh" aria-label={`Mesh · ${mesh.state.cell}`}>
+      <div className="groupe-entete">
+        <h2 className="titre-zone" data-node="1-2.mesh.titre">
+          Mesh · {mesh.state.cell}
+        </h2>
+        <span className="texte-faible" data-node="1-2.mesh.compte">
+          {nonVus.length}
+        </span>
+        <span className="texte-faible" data-node="1-2.mesh.etat" data-bind="mesh.etat">
+          {mesh.state.connected ? 'connecté' : 'hors mesh'}
+        </span>
+      </div>
+      {groupes.length === 0 && (
+        <p className="texte-discret" data-node="1-2.mesh.vide">
+          Aucun message à lire.
+        </p>
+      )}
+      {groupes.map((g) => (
+        <section
+          key={g.id}
+          className="groupe"
+          data-node={`1-2.mesh.groupe-${g.id}`}
+          aria-label={g.titre}
+        >
+          <div className="groupe-entete">
+            <h3
+              className={`titre-zone titre-zone--${g.tone}`}
+              data-node={`1-2.mesh.groupe-${g.id}.titre`}
+            >
+              {g.titre}
+            </h3>
+            <span className="texte-faible" data-node={`1-2.mesh.groupe-${g.id}.compte`}>
+              {g.items.length}
+            </span>
+          </div>
+          {g.items.map((d) => (
+            <ArticleMesh key={d.id} n={numero.get(d.id)!} dm={d} state={state} />
+          ))}
+        </section>
+      ))}
+    </section>
   );
 }
 
@@ -341,6 +576,13 @@ function Contenu() {
             </Link>
           </div>
         </section>
+        {state.mesh && (
+          <div className="boite-colonnes">
+            <div className="liste" data-node="1-2.liste">
+              <SectionMesh state={state} />
+            </div>
+          </div>
+        )}
       </main>
     );
   }
@@ -385,6 +627,7 @@ function Contenu() {
               ))}
             </section>
           ))}
+          {state.mesh && <SectionMesh state={state} />}
         </div>
       </div>
     </main>

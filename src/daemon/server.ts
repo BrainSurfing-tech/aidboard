@@ -28,6 +28,8 @@ import { registerEventRoutes } from './routes/events.js';
 import { registerStateRoutes } from './routes/state.js';
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerStructuralRoutes } from './routes/structural.js';
+import { registerMeshRoutes } from './routes/mesh.js';
+import type { MeshService } from './mesh/service.js';
 import type { MemoryProposals } from './memory/maintain.js';
 import type { MemoryService } from './memory/service.js';
 import { type AuthState, registerSecurity, writeSessionToken } from './security.js';
@@ -54,6 +56,8 @@ export interface ServerDeps {
   updateError?: () => string | null;
   /** 13.2 : mode d'installation et version du build (DR5) ; absent dans les tests de routes */
   install?: () => { mode: InstallMode; version: string };
+  /** 12.4 : null ou absent = mesh désactivé, les routes /api/mesh répondent 404 */
+  mesh?: MeshService | null;
   devOrigin?: string;
   webRoot?: string | null;
   logger?: boolean;
@@ -112,7 +116,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(500).send({ error: 'erreur interne' });
   });
   const structural = deps.structural ?? new StructuralService({ engine: 'codegraph' });
-  registerStateRoutes(app, deps.db, deps.store, structural);
+  registerStateRoutes(app, deps.db, deps.store, structural, deps.mesh ?? null);
+  registerMeshRoutes(app, { mesh: deps.mesh ?? null });
   registerDaemonRoutes(app, {
     db: deps.db,
     requestStop: deps.requestStop ?? (() => undefined),
