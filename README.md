@@ -103,6 +103,117 @@ entre les marqueurs `<!-- agentkit:start --> … <!-- agentkit:end -->` de
 `CLAUDE.md`/`AGENTS.md`. Le détail : `kernel/policy/routing.md`,
 `kernel/commands/sync.md`.
 
+### La connaissance : trois couches, un seul point d'entrée
+
+Le noyau range ce qu'un agent peut savoir en trois couches, et donne à chaque question **un
+seul** premier appel : interroger deux couches « au cas où » double le coût au lieu de le
+diviser.
+
+| Couche        | Contenu                                                                     | Où                                                   | Qui l'écrit                                       |
+| ------------- | --------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| Structurelle  | ce que le code fait _maintenant_ : symboles, appels, impact d'un changement | l'index structurel, `.codegraph/` de chaque worktree | personne : régénéré par le moteur, jamais commité |
+| Décisionnelle | ce qui n'est pas dans le code : pourquoi, ce qui a été tenté, les handoffs  | la mémoire locale `~/.aid/memory/` (`aid mem`)       | les agents, aux frontières de phase seulement     |
+| Normative     | comment on travaille, quelle phase fait quoi                                | le bloc `agentkit` de `CLAUDE.md`/`AGENTS.md`        | `/sync`, depuis le noyau                          |
+
+| La question porte sur                                                          | Premier appel           | Interdit                                           |
+| ------------------------------------------------------------------------------ | ----------------------- | -------------------------------------------------- |
+| Ce que le code fait, où c'est défini, qui appelle quoi, impact d'un changement | l'index (`index_*`)     | grep, lecture de fichier, sous-agent d'exploration |
+| Pourquoi une décision, ce qui a été tenté, l'état d'un cycle                   | la mémoire (`memory_*`) | relire l'historique git                            |
+| Comment on travaille                                                           | déjà en contexte (bloc) | tout appel                                         |
+| Rien ne répond                                                                 | lecture directe, nommée | —                                                  |
+
+La règle d'hygiène qui tient l'ensemble : **ce qui est dérivable du code ne va pas en
+mémoire.** « X est appelée par Y » écrit dans une page sera faux dans deux semaines, et
+l'index le donne à jour gratuitement.
+
+### L'index structurel (codegraph)
+
+Le rôle `structural_index` est tenu aujourd'hui par [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph) :
+un graphe local des symboles et des appels (tree-sitter, une trentaine de langages), en
+SQLite sous `.codegraph/`. Un seul appel `explore` rend le source verbatim des symboles
+utiles, les chemins d'appel entre eux (dispatch dynamique compris) et le rayon d'impact — ce
+qu'une boucle grep + lecture reconstruirait en dizaines d'allers-retours.
+
+**Mise en place** — une fois par machine, puis une fois par dépôt :
+
+```bash
+npm install -g @colbymchenry/codegraph
+codegraph telemetry off            # active par défaut
+cd <dépôt> && codegraph init       # construit .codegraph/, à mettre dans .gitignore
+```
+
+Avant le premier `init`, vérifier qu'aucun fichier de secret ne traîne hors `.gitignore` : ce
+qui est ignoré n'est pas indexé, un secret commité le serait et serait servi aux agents.
+`aid doctor` signale un `codegraph` absent et un décalage entre la version du CLI et celle qui
+a bâti l'index.
+
+**Ce qu'A-I-D en fait, sujet par sujet** :
+
+- À la création d'un sujet, son worktree est indexé **si le dépôt principal a déjà un
+  `.codegraph/`** — sinon le sujet reste sans index. L'indexation tourne à part : le sujet est
+  utilisable tout de suite (journal : `~/.aid/logs/<sujet>-index.log`).
+- Au démarrage du daemon, rattrapage sujet par sujet : `codegraph sync` là où le worktree a son
+  index (ce qui a bougé daemon arrêté), `init` là où le dépôt a adopté l'index depuis.
+- La carte du sujet affiche l'état relu en direct, jamais stocké : `codegraph · à jour`,
+  `codegraph · 3 fichiers en retard`, ou `index indisponible`.
+- `topic.cleanup` ne compte pas `.codegraph/` comme du travail non commité, arrête le démon
+  d'index du worktree et supprime l'index avec lui.
+
+**Comment un agent l'interroge** — tout passe par le daemon, qui ne connaît le moteur qu'à
+travers un contrat (`src/daemon/structural/`) :
+
+| Accès                                                                                                                       | Pour qui                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| MCP `aid` (`aid mcp`) : `index_explore`, `index_impact`, `index_affected`, `index_callers`, `index_symbols`, `index_status` | l'agent principal (Claude Code : `claude mcp add --scope user aid -- aid mcp`) |
+| CLI `codegraph explore "<symboles ou question>"`                                                                            | sous-agents et harnais sans MCP                                                |
+| MCP `codegraph` tiers (`codegraph_explore`)                                                                                 | toléré en transition là où il est déjà enregistré                              |
+
+Un agent lancé par A-I-D n'interroge que **son** sujet : le daemon résout le worktree depuis le
+token du run, et refuse un sujet étranger. L'usage est fixé par phase :
+
+| Phase  | Appel                      | Ce qu'il produit                                                  |
+| ------ | -------------------------- | ----------------------------------------------------------------- |
+| plan   | `index_impact { symbol }`  | le rayon d'impact déclaré, écrit dans la page de plan             |
+| dev    | `index_explore { query }`  | la compréhension du code avant de le modifier                     |
+| review | `index_affected { files }` | les tests à lancer ; le diff est comparé au rayon déclaré au plan |
+
+Trois règles que les agents violent naturellement, d'où leur place dans le bloc commité plutôt
+que dans les seules instructions MCP (qui n'atteignent que l'agent principal) :
+
+- **Le source rendu est déjà lu.** Le re-vérifier au grep annule le gain et double le coût.
+- **Jamais d'exploration déléguée à un sous-agent** : il lirait des fichiers et contournerait
+  l'index.
+- **Un résultat de l'index ne se note jamais en mémoire** : il est dérivé du code.
+
+Chaque relation rendue porte sa `provenance` : `candidate` pour codegraph (lu dans l'arbre
+syntaxique, sans type-checker : des homonymes peuvent se mêler dans `callers`), `heuristic`
+quand elle est déduite par convention ; `exact` est réservé à un futur moteur fondé sur un
+type-checker. Sur du code très dynamique (pipelines chaînés, logique pilotée par
+configuration) ou au-delà d'un appel réseau, le rayon d'impact est un plancher, pas un
+périmètre.
+
+**Quand l'index ne répond pas** — binaire absent, délai dépassé, index non initialisé, moteur
+coupé : tout converge vers `unavailable` avec un motif, et l'outil MCP rend « index
+indisponible : lecture directe ». Juste après une écriture, l'index est `stale` le temps de
+rattraper, avec le nombre de fichiers en retard. Le repli sur la lecture directe est permis,
+**le silence sur le repli ne l'est pas** : l'agent le dit dans son handoff, sinon une lecture
+de fichiers passerait pour un rayon d'impact et la review croirait vérifier un contrat.
+
+**Réglages** — côté daemon, `~/.aid/config.yaml` :
+
+```yaml
+structural:
+  engine: codegraph # ou off : aucun sujet indexé
+  bin: codegraph
+  timeoutMs: 60000
+  exclude: [dist] # segments de chemin retirés des résultats
+```
+
+Côté projet, `capabilities.structural_index` dans `agent.yml` (défaut `codegraph`). `null` est
+un choix légitime — le bloc retombe alors sur la lecture directe — ; le déclarer sans l'outil
+installé ne l'est pas : le bloc interdirait le grep sans rien offrir à la place. Brancher un
+autre moteur : `docs/structural-engines.md`.
+
 ## Développer
 
 Le mode « repo » : un clone sur `main`, `npm link` pour avoir `aid` sur le PATH, et le bandeau du
