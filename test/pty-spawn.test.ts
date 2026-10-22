@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test } from 'vitest';
 import { AidHttpError } from '../src/daemon/errors.js';
 import { LogWriter } from '../src/daemon/pty/log.js';
 import { agentCommand, agentEnv, meshEnv, resolveOnPath } from '../src/daemon/pty/spawn.js';
@@ -10,11 +10,23 @@ import { type Ctx, makeTopic, setupWorkspace } from './helpers/topics.js';
 
 const FAKE_AGENT = join(import.meta.dirname, 'fixtures/fake-agent.sh');
 const saved = { SHELL: process.env.SHELL, PATH: process.env.PATH };
+// Variables du mesh que la machine qui lance le gate peut exporter (cell swarph ouverte, etc.) : le test de la
+// cell attend qu'elles soient absentes, donc on les retire le temps du test puis on les remet.
+const MESH_AMBIANT = ['MESH_GATEWAY_URL', 'SWARPH_STATE', 'SWARPH_SELF'] as const;
+const meshSaved = Object.fromEntries(MESH_AMBIANT.map((k) => [k, process.env[k]]));
 let c: Ctx;
+
+beforeEach(() => {
+  for (const k of MESH_AMBIANT) delete process.env[k];
+});
 
 afterEach(async () => {
   process.env.SHELL = saved.SHELL;
   process.env.PATH = saved.PATH;
+  for (const k of MESH_AMBIANT) {
+    if (meshSaved[k] === undefined) delete process.env[k];
+    else process.env[k] = meshSaved[k];
+  }
   delete process.env.ANTHROPIC_API_KEY;
   await c?.t.d.stop();
 });
