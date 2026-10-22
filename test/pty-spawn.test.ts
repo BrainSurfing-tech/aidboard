@@ -10,9 +10,16 @@ import { type Ctx, makeTopic, setupWorkspace } from './helpers/topics.js';
 
 const FAKE_AGENT = join(import.meta.dirname, 'fixtures/fake-agent.sh');
 const saved = { SHELL: process.env.SHELL, PATH: process.env.PATH };
-// Variables du mesh que la machine qui lance le gate peut exporter (cell swarph ouverte, etc.) : le test de la
-// cell attend qu'elles soient absentes, donc on les retire le temps du test puis on les remet.
-const MESH_AMBIANT = ['MESH_GATEWAY_URL', 'SWARPH_STATE', 'SWARPH_SELF'] as const;
+// Variables que la machine qui lance le gate peut exporter (cell swarph ouverte, gate lancé depuis A-I-D…) : les tests
+// attendent la liste exacte des AID_* vues par l'agent et l'absence du mesh, donc on les retire le temps du test.
+const MESH_AMBIANT = [
+  'MESH_GATEWAY_URL',
+  'SWARPH_STATE',
+  'SWARPH_SELF',
+  'AID_HOME',
+  'AID_URL',
+  'AID_NO_BROWSER',
+] as const;
 const meshSaved = Object.fromEntries(MESH_AMBIANT.map((k) => [k, process.env[k]]));
 let c: Ctx;
 
