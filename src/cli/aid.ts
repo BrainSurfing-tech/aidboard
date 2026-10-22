@@ -168,8 +168,9 @@ async function main(): Promise<number> {
       cycleRequested = cycleGuard(async () => {
         const { gracefulInterrupt } = await import('../daemon/pty/reprise.js');
         const { writeFileSync } = await import('node:fs');
-        const entries = await gracefulInterrupt(handle.agents);
-        if (entries.length > 0) writeFileSync(paths.repriseJson, JSON.stringify(entries));
+        const entries = await gracefulInterrupt(handle.agents, paths.reprise);
+        if (entries.length > 0)
+          writeFileSync(paths.repriseJson, JSON.stringify(entries), { mode: 0o600 });
         if (mode === 'release') {
           const status = handle.updates();
           let next = launch;
