@@ -351,8 +351,9 @@ Prérequis opérateur :
   ```
 
 - vérifier `swairm --version`, puis `aid doctor` ; le chemin de l'exemple est **à vérifier**,
-  il n'est ni créé ni confirmé par ce plan ; redémarrer le daemon pour charger sa config (le bouton et le lancement lisent tous deux la
-  config chargée au démarrage : changer `swairm.bin` sans redémarrer ne change rien) ;
+  il n'est ni créé ni confirmé par ce plan ; redémarrer le daemon pour charger sa config
+  (le bouton et le lancement lisent tous deux la config chargée au démarrage : changer
+  `swairm.bin` sans redémarrer ne change rien) ;
 - disposer d'un sujet actif avec worktree et d'un projet doté d'un board, puis d'un
   dépôt sans board et d'un dépôt sans origin pour tester les replis S2 ; convenir de Q1/Q4.
 
