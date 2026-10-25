@@ -133,3 +133,49 @@ test('kind swarph-cell : accepté par le schéma, 409 tant que mesh.cell n’est
   expect(r.json().error).toContain('mesh désactivé');
   expect((await state()).agents).toEqual([]);
 });
+
+test('swairm-cell : 409 désactivé, 404 sujet inconnu et 400 genre inconnu', async () => {
+  const { topicId } = await boot();
+  const disabled = await post({ topicId, kind: 'swairm-cell' });
+  expect(disabled.statusCode).toBe(409);
+  expect(disabled.json().error).toContain('Swairm désactivé');
+  expect((await post({ topicId: 'tp_absent', kind: 'swairm-cell' })).statusCode).toBe(404);
+  expect((await post({ topicId, kind: 'swairm-invalid' })).statusCode).toBe(400);
+  expect((await state()).agents).toEqual([]);
+});
+
+test('swairm-cell : binaire absent 422 sans agent créé', async () => {
+  c = await setupWorkspace({ config: { swairm: { bin: '/nexiste/pas/swairm' } } });
+  const { topicId } = await makeTopic(c);
+  const response = await post({ topicId, kind: 'swairm-cell' });
+  expect(response.statusCode).toBe(422);
+  expect(response.json().error).toContain('introuvable dans le PATH');
+  expect((await state()).agents).toEqual([]);
+});
+
+test('swairm-cell : 201 PTY, unicité globale 409 avec id, réouverture après arrêt', async () => {
+  const bin = join(import.meta.dirname, 'fixtures/fake-swairm.sh');
+  c = await setupWorkspace({ config: { swairm: { bin } } });
+  const first = await makeTopic(c, 'Première cell');
+  const second = await makeTopic(c, 'Autre sujet');
+  const response = await post({ topicId: first.topicId, kind: 'swairm-cell' });
+  expect(response.statusCode).toBe(201);
+  const agent = response.json<Agent>();
+  expect(agent).toMatchObject({ kind: 'swairm-cell', transport: 'pty', command: [bin, 'cell'] });
+  expect((await state()).agents).toEqual([
+    expect.objectContaining({ id: agent.id, kind: 'swairm-cell' }),
+  ]);
+  const live = c.t.d.agents.get(agent.id)!;
+  await waitFor(() => live.mirror.screen().some((l) => l.includes('swairm>')), 5000, 'invite');
+  for (const topicId of [first.topicId, second.topicId]) {
+    const duplicate = await post({ topicId, kind: 'swairm-cell' });
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json().error).toContain(agent.id);
+  }
+  expect((await del(agent.id)).statusCode).toBe(202);
+  await waitFor(() => live.exited, 8000, 'arrêt');
+  expect(live.exit?.reason).toBe('user');
+  const reopened = await post({ topicId: second.topicId, kind: 'swairm-cell' });
+  expect(reopened.statusCode).toBe(201);
+  expect(reopened.json<Agent>().id).not.toBe(agent.id);
+});

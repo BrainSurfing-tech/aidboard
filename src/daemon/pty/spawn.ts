@@ -2,7 +2,7 @@ import { accessSync, constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { findAssetDir } from '../assets.js';
 
-export type SpawnKind = 'claude' | 'codex' | 'shell' | 'swarph-cell';
+export type SpawnKind = 'claude' | 'codex' | 'shell' | 'swarph-cell' | 'swairm-cell';
 
 /** Ce qu'il faut pour ouvrir la cell swarph (12.6, D38) : le binaire et le fichier de cell, jamais le token. */
 export interface MeshSpawn {
@@ -10,13 +10,22 @@ export interface MeshSpawn {
   cellFile: string;
 }
 
-export function agentCommand(kind: SpawnKind, env: NodeJS.ProcessEnv, mesh?: MeshSpawn): string[] {
+export function agentCommand(
+  kind: SpawnKind,
+  env: NodeJS.ProcessEnv,
+  mesh?: MeshSpawn,
+  swairm?: { bin: string },
+): string[] {
   if (kind === 'shell') return [env.SHELL || '/bin/bash', '-l'];
   // `swarph spawn` lance claude lui-même avec le session-id persistant de la cell ; sans starter ni bannière
   // pour que l'écran soit celui de claude (les hooks AID_HOOK s'appliquent comme à tout claude).
   if (kind === 'swarph-cell') {
     if (!mesh) throw new Error('swarph-cell : mesh non configuré');
     return [mesh.bin, 'spawn', mesh.cellFile, '--no-starter', '--no-banner'];
+  }
+  if (kind === 'swairm-cell') {
+    if (!swairm?.bin) throw new Error('swairm-cell : swairm non configuré');
+    return [swairm.bin, 'cell'];
   }
   return [kind];
 }

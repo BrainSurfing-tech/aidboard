@@ -35,7 +35,7 @@ export async function gracefulInterrupt(
   const live = agents.liveAgents();
   const results = await Promise.all(
     live.map(async (a): Promise<RepriseEntry | null> => {
-      if (a.kind === 'shell') {
+      if (a.kind === 'shell' || a.kind === 'swairm-cell') {
         await agents.stop(a.id, 'daemon_stop');
         return null;
       }
@@ -74,6 +74,7 @@ export async function resumeFromManifest(agents: AgentManager, paths: AidPaths):
   }
   await Promise.all(
     entries.map(async (entry) => {
+      if (entry.kind === 'swairm-cell') return;
       let content = '';
       try {
         content = readFileSync(entry.path, 'utf8').trim();

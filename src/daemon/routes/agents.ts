@@ -7,9 +7,9 @@ import type { AgentManager } from '../pty/manager.js';
 const Body = Type.Object(
   {
     topicId: Type.String({ minLength: 1 }),
-    kind: Type.Unsafe<'claude' | 'codex' | 'shell' | 'swarph-cell'>({
+    kind: Type.Unsafe<'claude' | 'codex' | 'shell' | 'swarph-cell' | 'swairm-cell'>({
       type: 'string',
-      enum: ['claude', 'codex', 'shell', 'swarph-cell'],
+      enum: ['claude', 'codex', 'shell', 'swarph-cell', 'swairm-cell'],
     }),
   },
   { additionalProperties: false },
@@ -34,7 +34,7 @@ export function registerAgentRoutes(
   app.post('/api/agents', { schema: { body: Body } }, async (req, reply) => {
     const body = req.body as {
       topicId: string;
-      kind: 'claude' | 'codex' | 'shell' | 'swarph-cell';
+      kind: 'claude' | 'codex' | 'shell' | 'swarph-cell' | 'swairm-cell';
     };
     return reply.code(201).send(deps.agents.spawn(body));
   });
