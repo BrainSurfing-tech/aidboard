@@ -19,6 +19,7 @@ export type AgentKind =
   | 'codex'
   | 'cursor'
   | 'shell'
+  | 'swairm-cell'
   | 'swairm-drone'
   | 'swairm-queen'
   | 'grokbot-cloud'
