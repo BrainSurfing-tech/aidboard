@@ -2,8 +2,8 @@
 # Faux swarph (chantier 12, D40) : jamais le vrai swarph en test, jamais de réseau.
 #   --version                              → 0.72.25
 #   monitor start --as <cell> --deliver pull → journalise, pose un marqueur sous $SWARPH_STATE/<cell>/monitor.pid ; FAKE_SWARPH_EXIT
-#   monitor stop                           → journalise, retire le marqueur
-#   monitor status --json                  → FAKE_SWARPH_STATUS (fichier) s'il est posé, sinon déduit du marqueur ; FAKE_SWARPH_PENDING
+#   monitor stop --as <cell>               → journalise, retire le marqueur
+#   monitor status --json --as <cell>      → FAKE_SWARPH_STATUS (fichier) s'il est posé, sinon déduit du marqueur ; FAKE_SWARPH_PENDING
 #   spawn <cell> ... --dry-run             → la commande claude attendue (12.6)
 # Chaque appel est journalisé dans FAKE_SWARPH_LOG (une ligne : les arguments).
 printf '%s\n' "$*" >>"${FAKE_SWARPH_LOG:-/dev/null}"
@@ -16,6 +16,11 @@ if [ "$1" = "monitor" ]; then
   for ((i = 1; i <= $#; i++)); do
     if [ "${!i}" = "--as" ]; then j=$((i + 1)); cell="${!j}"; fi
   done
+  # comme le vrai swarph : sans --as ni SWARPH_SELF, aucune identité, le monitor refuse (exit 2, pas de JSON)
+  if [ -z "$cell" ] && [ -z "${SWARPH_SELF:-}" ]; then
+    echo "swarph monitor: cannot resolve self identity; pass --as or set SWARPH_SELF" >&2
+    exit 2
+  fi
   cell="${cell:-${SWARPH_SELF:-cell}}"
   marker="${SWARPH_STATE:-/tmp}/$cell/monitor.pid"
   case "$2" in

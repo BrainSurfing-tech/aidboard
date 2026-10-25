@@ -185,7 +185,7 @@ export class MeshService {
       const { config } = this.deps;
       this.stopFollower();
       this.stopRefresh();
-      const stop = await this.run(config.bin, ['monitor', 'stop']);
+      const stop = await this.run(config.bin, ['monitor', 'stop', '--as', config.cell]);
       if (!stop.ok) this.deps.log(`mesh : swarph monitor stop a échoué : ${stop.stderr.trim()}`);
       if (config.tailscale.manage && this.tailscaleUpByUs) {
         const down = await this.run(config.tailscale.bin, ['down']);
@@ -264,7 +264,13 @@ export class MeshService {
   }
 
   private async monitorStatus(): Promise<{ monitor: MeshMonitor; pending: number }> {
-    const r = await this.run(this.deps.config.bin, ['monitor', 'status', '--json']);
+    const r = await this.run(this.deps.config.bin, [
+      'monitor',
+      'status',
+      '--json',
+      '--as',
+      this.deps.config.cell,
+    ]);
     if (r.spawnErrorCode === 'ENOENT') return { monitor: 'absent', pending: 0 };
     // `status` peut sortir en code 1 quand rien ne tourne, avec un JSON lisible quand même
     return parseMonitorStatus(r.stdout);
