@@ -158,7 +158,7 @@ test('manage: true : up à la connexion, down à la déconnexion — seulement s
   expect(a.swarph()).toContain('monitor start --as morzu-mac --deliver pull');
   const off = await a.svc.disconnect();
   expect(off).toMatchObject({ connected: false, monitor: 'stopped', tailscale: 'stopped' });
-  expect(a.swarph()).toContain('monitor stop');
+  expect(a.swarph()).toContain('monitor stop --as morzu-mac');
   expect(a.tailscale()).toContain('down');
   expect(existsSync(a.marker)).toBe(false);
 
