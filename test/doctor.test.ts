@@ -1,11 +1,16 @@
 import { expect, test } from 'vitest';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
   gitAtLeast,
   nodeSupported,
   type MeshProbe,
   type Probes,
+  realProbes,
   runChecks,
   runDoctor,
+  type SwairmProbe,
 } from '../src/cli/commands/doctor.js';
 import { resolvePaths } from '../src/daemon/paths.js';
 import type { IndexStatus } from '../src/shared/structural.js';
@@ -26,6 +31,7 @@ const good: Probes = {
   structural: async () => null,
   install: () => ({ mode: 'repo', version: null }),
   mesh: async () => null,
+  swairm: async () => null,
 };
 
 const levels = async (over: Partial<Probes>) =>
@@ -363,3 +369,104 @@ async function runDoctorLines(p: Probes): Promise<string[]> {
   await runDoctor(resolvePaths('/nonexistent/aid-home'), p, (s) => lines.push(s));
   return lines;
 }
+
+const swairmOk: SwairmProbe = {
+  bin: '/home/j/.local/bin/swairm',
+  resolved: '/home/j/.local/bin/swairm',
+  version: '0.1.0',
+};
+
+test('swairm (14.5) : désactivé = une ligne ✓ ; configuré et lisible = ✓ sans promesse de compatibilité', async () => {
+  const off = await runChecks(good);
+  expect(off.filter((c) => /swairm/.test(c.label))).toEqual([
+    { level: 'ok', label: 'swairm : désactivé (`swairm.bin` vide dans config.yaml)' },
+  ]);
+  const on = await runChecks({ ...good, swairm: async () => swairmOk });
+  expect(on.filter((c) => c.level !== 'ok')).toEqual([]);
+  expect(on.map((c) => c.label)).toContain('swairm 0.1.0');
+  expect(on.map((c) => c.label).join('\n')).not.toMatch(/compatible/i);
+});
+
+test('swairm (14.5) : binaire introuvable ou version illisible = ⚠ avec correctif, jamais ✗', async () => {
+  const absent = await runChecks({
+    ...good,
+    swairm: async () => ({ ...swairmOk, resolved: null, version: null }),
+  });
+  const intro = absent.find((c) => c.label === `swairm introuvable : ${swairmOk.bin}`)!;
+  expect(intro.level).toBe('warn');
+  expect(intro.detail).toContain('swairm.bin');
+  expect(intro.detail).toContain('chemin absolu');
+  expect(absent.some((c) => c.level === 'ko')).toBe(false);
+
+  const illisible = await runChecks({
+    ...good,
+    swairm: async () => ({ ...swairmOk, version: null }),
+  });
+  const v = illisible.find((c) => c.label === 'swairm : version illisible')!;
+  expect(v.level).toBe('warn');
+  expect(v.detail).toContain('--version');
+  expect(illisible.some((c) => c.level === 'ko')).toBe(false);
+});
+
+test('swairm (14.5) : realProbes sur le faux CLI — désactivé, chemin absolu, introuvable, version en échec, jamais `cell`', async () => {
+  const fake = resolve('test/fixtures/fake-swairm.sh');
+  const home = mkdtempSync(join(tmpdir(), 'aid-doctor-swairm-'));
+  const log = join(home, 'calls.log');
+  const paths = resolvePaths(home);
+  const withBin = (bin: string) =>
+    writeFileSync(paths.config, `swairm:\n  bin: ${JSON.stringify(bin)}\n`);
+  const saved = {
+    log: process.env.FAKE_SWAIRM_LOG,
+    exit: process.env.FAKE_SWAIRM_VERSION_EXIT,
+  };
+  process.env.FAKE_SWAIRM_LOG = log;
+  delete process.env.FAKE_SWAIRM_VERSION_EXIT;
+  try {
+    expect(await realProbes(paths).swairm()).toBeNull(); // pas de config.yaml : désactivé
+
+    writeFileSync(paths.config, 'swairm:\n  bin: ""\n');
+    expect(await realProbes(paths).swairm()).toBeNull();
+
+    withBin(fake);
+    expect(await realProbes(paths).swairm()).toEqual({
+      bin: fake,
+      resolved: fake,
+      version: '0.1.0',
+    });
+
+    withBin(join(home, 'absent'));
+    expect(await realProbes(paths).swairm()).toEqual({
+      bin: join(home, 'absent'),
+      resolved: null,
+      version: null,
+    });
+
+    const nonExec = join(home, 'non-exec');
+    writeFileSync(nonExec, '#!/bin/sh\n');
+    chmodSync(nonExec, 0o644);
+    withBin(nonExec);
+    expect((await realProbes(paths).swairm())?.resolved).toBeNull();
+
+    withBin(fake);
+    process.env.FAKE_SWAIRM_VERSION_EXIT = '3';
+    expect(await realProbes(paths).swairm()).toEqual({ bin: fake, resolved: fake, version: null });
+
+    // le rendu complet : le faux CLI en échec donne un ⚠, jamais un ✗ ni un lancement de `cell`
+    const lines = await runDoctorLines({ ...good, swairm: () => realProbes(paths).swairm() });
+    expect(lines.join('\n')).toContain('⚠ swairm : version illisible');
+    expect(lines.join('\n')).not.toContain('✗');
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
+      '--version',
+      '--version',
+      '--version',
+    ]);
+  } finally {
+    for (const [k, v] of [
+      ['FAKE_SWAIRM_LOG', saved.log],
+      ['FAKE_SWAIRM_VERSION_EXIT', saved.exit],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

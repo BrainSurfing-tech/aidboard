@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 # Cell locale déterministe : aucun vrai CLI, aucun réseau, aucun secret journalisé.
+printf '%s\n' "$*" >>"${FAKE_SWAIRM_LOG:-/dev/null}"
+if [ "${1:-}" = "--version" ]; then
+  if [ "${FAKE_SWAIRM_VERSION_EXIT:-0}" != "0" ]; then
+    echo "fake-swairm : version illisible" >&2
+    exit "${FAKE_SWAIRM_VERSION_EXIT}"
+  fi
+  echo "0.1.0"
+  exit 0
+fi
 if [ "${1:-}" != "cell" ]; then
   echo "fake-swairm : commande inconnue" >&2
   exit 2

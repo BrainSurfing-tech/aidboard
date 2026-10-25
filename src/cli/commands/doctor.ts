@@ -10,6 +10,7 @@ import { readProcVersion } from '../../daemon/routes/workspaces.js';
 import { loadConfig } from '../../daemon/config.js';
 import { meshPaths } from '../../daemon/mesh/paths.js';
 import { tailscaleState } from '../../daemon/mesh/tailscale.js';
+import { resolveOnPath } from '../../daemon/pty/spawn.js';
 import type { MemoryHealth } from '../../daemon/memory/service.js';
 import type { AidPaths } from '../../daemon/paths.js';
 import type { IndexStatus } from '../../shared/structural.js';
@@ -38,6 +39,13 @@ export interface MeshProbe {
   tailscale: MeshTailscale;
 }
 
+/** Ce que `aid doctor` regarde de Swairm (14.5, D49) : le binaire résolu et sa version, jamais un lancement de `cell`. */
+export interface SwairmProbe {
+  bin: string;
+  resolved: string | null; // chemin absolu exécutable, null = introuvable
+  version: string | null; // première ligne de `--version`, null = illisible
+}
+
 export interface Probes {
   nodeVersion: string;
   platform: NodeJS.Platform;
@@ -54,6 +62,7 @@ export interface Probes {
   structural(): Promise<IndexStatus | null>; // état du premier workspace ; null = daemon arrêté, aucun workspace, ou index indisponible
   install(): { mode: InstallMode; version: string | null }; // 13.2 : comment cette CLI est installée ; version = celle de ~/.aid/server/current (mode release)
   mesh(): Promise<MeshProbe | null>; // 12.2 : null = mesh désactivé (`mesh.cell` vide)
+  swairm(): Promise<SwairmProbe | null>; // 14.5 : null = cell Swairm désactivée (`swairm.bin` vide)
 }
 
 export function nodeSupported(v: string): boolean {
@@ -262,6 +271,23 @@ export async function runChecks(p: Probes): Promise<Check[]> {
     else add('warn', 'Tailscale introuvable', 'installer Tailscale, ou poser mesh.tailscale.bin');
   }
 
+  // 14.5 (D49) : optionnel, tout est `warn`. La version lue ne dit rien de la compatibilité de `cell`.
+  const swairm = await p.swairm();
+  if (!swairm) add('ok', 'swairm : désactivé (`swairm.bin` vide dans config.yaml)');
+  else if (!swairm.resolved) {
+    add(
+      'warn',
+      `swairm introuvable : ${swairm.bin}`,
+      'la cell Swairm sera refusée : vérifier le lien et l’interpréteur du clone de déploiement, et poser swairm.bin en chemin absolu dans ~/.aid/config.yaml',
+    );
+  } else {
+    verify(swairm.version !== null, `swairm ${swairm.version ?? ''}`.trim(), {
+      level: 'warn',
+      label: 'swairm : version illisible',
+      detail: `\`${swairm.resolved} --version\` a échoué : vérifier le lien et l’interpréteur du clone de déploiement`,
+    });
+  }
+
   const mem = await p.memoryHealth();
   if (mem) {
     const total = Object.values(mem.pages).reduce((a, b) => a + b, 0);
@@ -371,6 +397,13 @@ export function realProbes(paths: AidPaths): Probes {
         gateway: cfg.gateway,
         tailscale: await tailscaleState(cfg.tailscale.bin),
       };
+    },
+    async swairm() {
+      const { bin } = loadConfig(paths).swairm;
+      if (!bin) return null;
+      // le PATH du daemon n'est pas celui du shell : on résout comme le lancement, puis on appelle le chemin trouvé
+      const resolved = resolveOnPath(bin, process.env.PATH ?? '');
+      return { bin, resolved, version: resolved ? await run(resolved, ['--version']) : null };
     },
     async structural() {
       const info = await runningDaemon(paths);
