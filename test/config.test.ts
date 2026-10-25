@@ -14,6 +14,49 @@ import { ensureHome, resolvePaths } from '../src/daemon/paths.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'aid-cfg-'));
 
+test('swairm (14.1) : section absente ou vide et binaire vide désactivent la cell', () => {
+  expect(DEFAULT_CONFIG.swairm).toEqual({ bin: '' });
+  for (const text of ['', '{}', 'swairm: {}', 'swairm:\n  bin: ""\n']) {
+    expect(parseConfig(text)).toEqual(DEFAULT_CONFIG);
+  }
+});
+
+test.each(['swairm', '/tmp/aid-swairm/bin/swairm'])(
+  'swairm (14.1) : accepte le binaire %s et conserve les autres défauts',
+  (bin) => {
+    expect(parseConfig(`swairm:\n  bin: ${bin}\n`)).toEqual({
+      ...DEFAULT_CONFIG,
+      swairm: { bin },
+    });
+    expect(parseConfig('').swairm).toEqual({ bin: '' });
+  },
+);
+
+test.each(['1', 'true', 'null', '[]', '{}'])(
+  'swairm (14.1) : refuse un binaire non chaîne (%s)',
+  (bin) => {
+    expect(() => parseConfig(`swairm:\n  bin: ${bin}\n`)).toThrow(
+      'swairm.bin doit être une chaîne',
+    );
+  },
+);
+
+test.each(['1', 'true', 'null', '[]', 'swairm', ''])(
+  'swairm (14.1) : refuse une section non objet (%s)',
+  (section) => {
+    expect(() => parseConfig(`swairm: ${section}\n`)).toThrow('swairm doit être un objet');
+  },
+);
+
+test('swairm (14.1) : refuse les clés inconnues racine et sous-clés', () => {
+  expect(() => parseConfig('swairmm: {}')).toThrow('clé inconnue dans config.yaml : swairmm');
+  for (const key of ['boards', 'token']) {
+    expect(() => parseConfig(`swairm:\n  ${key}: valeur\n`)).toThrow(
+      `clé inconnue dans config.yaml : swairm.${key}`,
+    );
+  }
+});
+
 test('sans fichier, les défauts', () => {
   expect(loadConfig(resolvePaths(tmp()))).toEqual(DEFAULT_CONFIG);
 });

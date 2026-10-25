@@ -7,6 +7,8 @@ export interface StateSnapshot {
   runs: Run[];
   agents: Agent[];
   actions: ActionRun[];
+  /** présent seulement quand `swairm.bin` est configuré (D43) */
+  swairm?: { enabled: true };
   /** présent seulement quand `mesh.cell` est configuré (chantier 12) */
   mesh?: { state: MeshState; inbox: MeshDm[]; tailscaleManage: boolean };
 }

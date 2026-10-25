@@ -62,6 +62,93 @@ function PageAvecChemin() {
 const openAvecChemin = (state: ReturnType<typeof snapshot> | 'down', id = 'tp_1') =>
   setup(<PageAvecChemin />, state, `/sujets/${id}`);
 
+test.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])('choix de lancement : mesh=%s, Swairm=%s, ordre conservé', async (mesh, swairm) => {
+  const state = snapshot({
+    workspaces: [ws()],
+    topics: [topic()],
+    runs: [run],
+    ...(mesh && {
+      mesh: {
+        state: {
+          connected: false,
+          tailscale: 'absent' as const,
+          monitor: 'absent' as const,
+          pending: 0,
+          since: null,
+          cell: 'test-cell',
+        },
+        inbox: [],
+        tailscaleManage: false,
+      },
+    }),
+    ...(swairm && { swairm: { enabled: true as const } }),
+  });
+  const h = open(state);
+  await screen.findByText('Aucun agent ne tourne sur ce sujet.');
+  const labels = [
+    'Lancer claude',
+    'Lancer codex',
+    'Ouvrir un shell',
+    ...(mesh ? ['Ouvrir la cell swarph'] : []),
+    ...(swairm ? ['Ouvrir la cell Swairm'] : []),
+  ];
+  const choices = () =>
+    Array.from(document.querySelectorAll('[data-action="agent.lancer"]')).map(
+      (button) => button.textContent,
+    );
+  expect(choices()).toEqual(labels);
+  h.state = { ...state, agents: [agent()] };
+  await act(() => h.client.refresh());
+  await userEvent.click(await screen.findByText('+ Agent'));
+  expect(choices()).toEqual(labels);
+});
+
+test('Swairm : POST exact et sélection du terminal créé après rafraîchissement', async () => {
+  const state = snapshot({
+    workspaces: [ws()],
+    topics: [topic()],
+    runs: [run],
+    agents: [agent()],
+    swairm: { enabled: true },
+  });
+  const created = agent({ id: 'ag_swairm', kind: 'swairm-cell', command: ['fake-swairm', 'cell'] });
+  const h = open(state, 'tp_1', { 'POST /api/agents': json(201, created) });
+  await userEvent.click(await screen.findByText('+ Agent'));
+  await userEvent.click(screen.getByRole('button', { name: 'Ouvrir la cell Swairm' }));
+  expect(h.calls.filter((c) => c.url === '/api/agents')).toEqual([
+    { method: 'POST', url: '/api/agents', body: { topicId: 'tp_1', kind: 'swairm-cell' } },
+  ]);
+  // Le nouvel agent n'est pas le dernier : la sélection doit venir de la réponse POST.
+  h.state = { ...state, agents: [created, agent()] };
+  await act(() => h.client.refresh());
+  expect(screen.getByTestId('term-ag_swairm').getAttribute('data-visible')).toBe('true');
+  expect(screen.getByTestId('term-ag_1').getAttribute('data-visible')).toBe('false');
+});
+
+test.each([
+  [409, 'Une cell Swairm est déjà ouverte : ag_existant'],
+  [422, 'swairm introuvable dans le PATH du daemon'],
+])('Swairm : erreur %s affichée sans terminal fantôme', async (status, error) => {
+  open(
+    snapshot({
+      workspaces: [ws()],
+      topics: [topic()],
+      runs: [run],
+      swairm: { enabled: true },
+    }),
+    'tp_1',
+    { 'POST /api/agents': json(status, { error }) },
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Ouvrir la cell Swairm' }));
+  expect((await screen.findByRole('alert')).textContent).toBe(error);
+  expect(screen.queryByTestId(/^term-/)).toBeNull();
+});
+
 test('en-tête : fil d’Ariane, titre, état, branche, base, worktree', async () => {
   open(snapshot({ workspaces: [ws()], topics: [topic()], runs: [run] }));
   await screen.findByText('Mon sujet');

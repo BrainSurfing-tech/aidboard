@@ -145,7 +145,13 @@ export class AgentManager {
   /** Estime le statut des agents sans hooks (E8). N'émet qu'aux transitions. */
   tickHeuristic(now: number): void {
     for (const a of this.live.values()) {
-      if (a.exited || a.hooked || a.paused || (a.kind !== 'claude' && a.kind !== 'codex')) continue;
+      if (
+        a.exited ||
+        a.hooked ||
+        a.paused ||
+        (a.kind !== 'claude' && a.kind !== 'codex' && a.kind !== 'swairm-cell')
+      )
+        continue;
       const silenceMs = now - a.lastOutputAt;
       const next = estimate(silenceMs, a.mirror.screen(), a.estimated);
       if (!next) continue;
@@ -208,7 +214,17 @@ export class AgentManager {
       const p = meshPaths(config.mesh, process.env.HOME ?? homedir());
       meshSpawn = { bin: config.mesh.bin, cellFile: p.cellFile };
     }
-    const [bin = '', ...args] = agentCommand(o.kind, process.env, meshSpawn);
+    if (o.kind === 'swairm-cell') {
+      if (!config.swairm.bin)
+        throw new AidHttpError(409, 'Swairm désactivé : `swairm.bin` vide dans config.yaml');
+      const deja = this.liveAgents().find((a) => a.kind === 'swairm-cell');
+      if (deja)
+        throw new AidHttpError(
+          409,
+          `la cell Swairm est déjà ouverte (agent ${deja.id}) : une seule session par daemon`,
+        );
+    }
+    const [bin = '', ...args] = agentCommand(o.kind, process.env, meshSpawn, config.swairm);
     const file = resolveOnPath(bin, process.env.PATH ?? '');
     if (!file) throw new AidHttpError(422, `${bin} introuvable dans le PATH du daemon`);
 

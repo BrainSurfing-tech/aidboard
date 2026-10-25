@@ -28,6 +28,7 @@ export async function buildSnapshot(
   engine: StructuralService,
   all = false,
   mesh: MeshService | null = null,
+  swairmEnabled = false,
 ): Promise<StateSnapshot> {
   const workspaces = (db.prepare('SELECT * FROM workspaces ORDER BY name').all() as Row[]).map(
     (r): Workspace => ({
@@ -130,6 +131,7 @@ export async function buildSnapshot(
     runs,
     agents,
     actions,
+    ...(swairmEnabled && { swairm: { enabled: true as const } }),
     // 12.4 : présent seulement quand une cell est configurée (D39)
     ...(mesh && {
       mesh: { state: mesh.current(), inbox: mesh.inbox(), tailscaleManage: mesh.tailscaleManage },

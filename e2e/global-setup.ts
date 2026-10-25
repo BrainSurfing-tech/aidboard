@@ -24,7 +24,9 @@ export default async function globalSetup() {
     '    manage: false',
     `    bin: ${join(fixtures, 'fake-tailscale.sh')}`,
   ].join('\n');
-  writeFileSync(join(home, 'config.yaml'), `port: ${PORT}\n${mesh}\n`, { mode: 0o600 });
+  // 14.6 : la cell Swairm sur le faux CLI (D48) — chemin absolu, jamais le vrai swairm ni le ~/.aid réel
+  const swairm = ['swairm:', `  bin: ${join(fixtures, 'fake-swairm.sh')}`].join('\n');
+  writeFileSync(join(home, 'config.yaml'), `port: ${PORT}\n${mesh}\n${swairm}\n`, { mode: 0o600 });
   const PATH = `${join(import.meta.dirname, '../test/fixtures/bin')}${delimiter}${process.env.PATH}`;
   const env = {
     ...process.env,
@@ -35,6 +37,8 @@ export default async function globalSetup() {
     FAKE_SWARPH_LOG: join(home, 'swarph.log'),
     FAKE_TAILSCALE_STATEFILE: join(home, 'tailscale.state'),
     FAKE_TAILSCALE_LOG: join(home, 'tailscale.log'),
+    FAKE_SWAIRM_LOG: join(home, 'swairm.log'),
+    FAKE_SWAIRM_INPUT_LOG: join(home, 'swairm-input.log'),
   };
   execFileSync(process.execPath, [CLI], { env, timeout: 40_000 });
   const info = JSON.parse(readFileSync(join(home, 'daemon.json'), 'utf8')) as {

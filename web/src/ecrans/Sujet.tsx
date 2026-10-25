@@ -53,7 +53,7 @@ const INDEX_LABEL: Record<IndexState, string> = {
 };
 
 const LIVE = ['starting', 'working', 'needs_input', 'idle'];
-type Kind = 'claude' | 'codex' | 'shell' | 'swarph-cell';
+type Kind = 'claude' | 'codex' | 'shell' | 'swarph-cell' | 'swairm-cell';
 const KINDS: Array<{ kind: Kind; label: string }> = [
   { kind: 'claude', label: 'Lancer claude' },
   { kind: 'codex', label: 'Lancer codex' },
@@ -61,6 +61,7 @@ const KINDS: Array<{ kind: Kind; label: string }> = [
 ];
 // 12.6 : la cell swarph ne se propose que si `mesh.cell` est configuré (le snapshot porte alors `mesh`)
 const KIND_CELL = { kind: 'swarph-cell' as const, label: 'Ouvrir la cell swarph' };
+const KIND_SWAIRM_CELL = { kind: 'swairm-cell' as const, label: 'Ouvrir la cell Swairm' };
 
 function Contenu({ topicId }: { topicId: string }) {
   const { state, outputs, daemon, retry, call } = useAid();
@@ -262,7 +263,11 @@ function Contenu({ topicId }: { topicId: string }) {
   const runIds = state.runs.filter((r) => r.topicId === topic.id).map((r) => r.id);
   const agents: Agent[] = state.agents.filter((a) => runIds.includes(a.runId));
   const active = agents.find((a) => a.id === selected) ?? agents.at(-1);
-  const kinds = state.mesh ? [...KINDS, KIND_CELL] : KINDS;
+  const kinds = [
+    ...KINDS,
+    ...(state.mesh ? [KIND_CELL] : []),
+    ...(state.swairm ? [KIND_SWAIRM_CELL] : []),
+  ];
 
   async function launch(kind: Kind) {
     setErreur(null);

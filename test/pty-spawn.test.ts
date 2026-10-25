@@ -315,3 +315,97 @@ test('swarph-cell sans mesh.cell : 409, aucun agent créé', async () => {
   );
   expect(c.t.db.prepare('SELECT count(*) AS n FROM agents').get()).toEqual({ n: 0 });
 });
+// 14.2 : CLI direct, environnement commun et coexistence des deux genres de cell.
+const FAKE_SWAIRM = join(import.meta.dirname, 'fixtures/fake-swairm.sh');
+
+test('swairm-cell : commande exacte et configuration obligatoire, sans environnement mesh ajouté', () => {
+  expect(agentCommand('swairm-cell', {}, undefined, { bin: FAKE_SWAIRM })).toEqual([
+    FAKE_SWAIRM,
+    'cell',
+  ]);
+  expect(() => agentCommand('swairm-cell', {})).toThrow(/swairm non configuré/);
+  expect(() => agentCommand('swairm-cell', {}, undefined, { bin: '' })).toThrow(
+    /swairm non configuré/,
+  );
+  expect(meshEnv('swairm-cell', { gateway: 'http://mesh.invalid', stateRoot: '/mesh' })).toEqual(
+    {},
+  );
+  const env = agentEnv({}, [], { AID_TOPIC: 'topic-test' });
+  expect(env).toEqual({ TERM: 'xterm-256color', COLORTERM: 'truecolor', AID_TOPIC: 'topic-test' });
+});
+
+test('swairm-cell : cwd, terminal, présence des AID et lectures locales sans ajout mesh ni GitHub', async () => {
+  const { DEFAULT_CONFIG } = await import('../src/daemon/config.js');
+  c = await setupWorkspace({
+    config: {
+      swairm: { bin: FAKE_SWAIRM },
+      mesh: { ...DEFAULT_CONFIG.mesh, gateway: 'http://mesh.invalid', stateRoot: '/mesh' },
+      env: {
+        strip: [
+          ...DEFAULT_CONFIG.env.strip,
+          'MESH_GATEWAY_URL',
+          'SWARPH_STATE',
+          'SWARPH_SELF',
+          'GH_TOKEN',
+          'GITHUB_TOKEN',
+        ],
+      },
+    },
+  });
+  const topic = await makeTopic(c);
+  const agent = c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swairm-cell' });
+  expect(agent).toMatchObject({ kind: 'swairm-cell', transport: 'pty', cwd: topic.wt });
+  expect(agent.command).toEqual([FAKE_SWAIRM, 'cell']);
+  const live = c.t.d.agents.get(agent.id)!;
+  let text = '';
+  live.subscribe((chunk) => (text += chunk));
+  await waitFor(() => text.includes('swairm> '), 5000, 'invite Swairm');
+  expect(text).toContain(`FAKE_SWAIRM cwd=${topic.wt} argc=1 args=cell`);
+  expect(text).toContain('TERM=xterm-256color COLORTERM=truecolor');
+  for (const key of ['AID_URL', 'AID_TOKEN', 'AID_TOPIC', 'AID_RUN', 'AID_AGENT', 'AID_SPOOL'])
+    expect(text).toContain(`${key}=present`);
+  for (const key of ['MESH_GATEWAY_URL', 'SWARPH_STATE', 'SWARPH_SELF', 'GH_TOKEN', 'GITHUB_TOKEN'])
+    expect(text).toContain(`${key}=absent`);
+  live.pty.write('help\nstatus\ninbox\nevents\n');
+  await waitFor(() => text.includes('events: empty'), 5000, 'lectures locales');
+  expect(text).toContain('help status inbox events quit');
+  expect(text).toContain('status: ready');
+  expect(text).toContain('inbox: empty');
+  live.pty.write('quit\n');
+  await waitFor(() => live.exited, 5000, 'quit Swairm');
+  expect(live.exit).toMatchObject({ exitCode: 0, reason: 'exit' });
+  expect(c.t.d.agents.spawn({ topicId: topic.topicId, kind: 'swairm-cell' }).kind).toBe(
+    'swairm-cell',
+  );
+});
+
+test('swairm-cell et swarph-cell peuvent coexister', async () => {
+  const { DEFAULT_CONFIG } = await import('../src/daemon/config.js');
+  const home = mkdtempSync(join(tmpdir(), 'aid-swairm-mesh-'));
+  c = await setupWorkspace({
+    config: {
+      swairm: { bin: FAKE_SWAIRM },
+      mesh: {
+        ...DEFAULT_CONFIG.mesh,
+        bin: FAKE_SWARPH,
+        cell: 'test-cell',
+        cellFile: join(home, 'cell.yaml'),
+        stateRoot: join(home, 'state'),
+      },
+    },
+  });
+  const { topicId } = await makeTopic(c);
+  const swarph = c.t.d.agents.spawn({ topicId, kind: 'swarph-cell' });
+  const swairm = c.t.d.agents.spawn({ topicId, kind: 'swairm-cell' });
+  for (const agent of [swarph, swairm]) {
+    const live = c.t.d.agents.get(agent.id)!;
+    await waitFor(() => live.mirror.screen().length > 0, 5000, 'cell prête');
+    expect(live.exited).toBe(false);
+  }
+  expect(
+    c.t.d.agents
+      .liveAgents()
+      .map((a) => a.kind)
+      .sort(),
+  ).toEqual(['swairm-cell', 'swarph-cell']);
+});
