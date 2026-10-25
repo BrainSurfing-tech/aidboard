@@ -287,6 +287,14 @@ export async function runChecks(p: Probes): Promise<Check[]> {
       detail: `\`${swairm.resolved} --version\` a échoué : vérifier le lien et l’interpréteur du clone de déploiement`,
     });
   }
+  // nom nu : doctor le résout dans le PATH du shell qui le lance, que le daemon (launchd, release) n'a pas forcément
+  if (swairm?.resolved && swairm.resolved !== swairm.bin) {
+    add(
+      'warn',
+      'swairm.bin n’est pas un chemin absolu',
+      `résolu ici dans le PATH du shell (${swairm.resolved}), pas dans celui du daemon : poser swairm.bin en chemin absolu dans ~/.aid/config.yaml`,
+    );
+  }
 
   const mem = await p.memoryHealth();
   if (mem) {
@@ -401,7 +409,7 @@ export function realProbes(paths: AidPaths): Probes {
     async swairm() {
       const { bin } = loadConfig(paths).swairm;
       if (!bin) return null;
-      // le PATH du daemon n'est pas celui du shell : on résout comme le lancement, puis on appelle le chemin trouvé
+      // on résout comme le lancement mais dans le PATH de ce shell (celui du daemon est inconnu d'ici), puis on appelle le chemin trouvé
       const resolved = resolveOnPath(bin, process.env.PATH ?? '');
       return { bin, resolved, version: resolved ? await run(resolved, ['--version']) : null };
     },

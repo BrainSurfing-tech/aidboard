@@ -470,3 +470,16 @@ test('swairm (14.5) : realProbes sur le faux CLI — désactivé, chemin absolu,
     }
   }
 });
+
+test('swairm (14.5) : un nom nu résolu dans le PATH du shell = ⚠ « pas un chemin absolu » ; un chemin absolu = aucune alerte', async () => {
+  const nu = await runChecks({
+    ...good,
+    swairm: async () => ({ ...swairmOk, bin: 'swairm' }),
+  });
+  const w = nu.find((c) => c.label === 'swairm.bin n’est pas un chemin absolu')!;
+  expect(w.level).toBe('warn');
+  expect(w.detail).toContain('PATH du shell');
+  expect(w.detail).toContain(swairmOk.resolved!);
+  const absolu = await runChecks({ ...good, swairm: async () => swairmOk });
+  expect(absolu.some((c) => c.label === 'swairm.bin n’est pas un chemin absolu')).toBe(false);
+});
