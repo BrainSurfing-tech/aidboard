@@ -12,10 +12,11 @@ export function registerStateRoutes(
   store: EventStore,
   engine: StructuralService,
   mesh: MeshService | null = null,
+  swairmEnabled = false,
 ): void {
   app.get('/api/state', async (req) => {
     const all = (req.query as { all?: string }).all === '1';
     await syncTopicBranches(db, store);
-    return buildSnapshot(db, engine, all, mesh);
+    return buildSnapshot(db, engine, all, mesh, swairmEnabled);
   });
 }

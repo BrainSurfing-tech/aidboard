@@ -26,6 +26,22 @@ function seedActiveTopic(db: TestDaemon['db'], worktree: string, indexState = 'r
 }
 
 let t: TestDaemon;
+test.each(['', join(import.meta.dirname, 'fixtures/fake-swairm.sh'), '/absent/swairm'])(
+  'GET /api/state : disponibilité Swairm depuis la config (%s), sans mesh ni board',
+  async (bin) => {
+    t = await startTestDaemon(undefined, { config: { swairm: { bin } } });
+    const r = await t.d.app.inject({ url: '/api/state', headers: t.headers });
+    expect(r.statusCode).toBe(200);
+    const s = r.json<StateSnapshot>();
+    expect(s).not.toHaveProperty('mesh');
+    expect(s.workspaces).toEqual([]);
+    if (bin) expect(s.swairm).toEqual({ enabled: true });
+    else expect(s).not.toHaveProperty('swairm');
+    expect(r.body).not.toContain('"bin"');
+    if (bin) expect(r.body).not.toContain(bin);
+  },
+);
+
 afterEach(async () => {
   await t?.d.stop();
   delete process.env.FAKE_CODEGRAPH_FIXTURES;

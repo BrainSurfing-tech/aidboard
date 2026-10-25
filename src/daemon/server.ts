@@ -116,7 +116,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(500).send({ error: 'erreur interne' });
   });
   const structural = deps.structural ?? new StructuralService({ engine: 'codegraph' });
-  registerStateRoutes(app, deps.db, deps.store, structural, deps.mesh ?? null);
+  registerStateRoutes(
+    app,
+    deps.db,
+    deps.store,
+    structural,
+    deps.mesh ?? null,
+    !!deps.config.swairm.bin,
+  );
   registerMeshRoutes(app, { mesh: deps.mesh ?? null });
   registerDaemonRoutes(app, {
     db: deps.db,
