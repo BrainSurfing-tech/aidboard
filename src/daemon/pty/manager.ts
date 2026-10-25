@@ -145,7 +145,13 @@ export class AgentManager {
   /** Estime le statut des agents sans hooks (E8). N'émet qu'aux transitions. */
   tickHeuristic(now: number): void {
     for (const a of this.live.values()) {
-      if (a.exited || a.hooked || a.paused || (a.kind !== 'claude' && a.kind !== 'codex')) continue;
+      if (
+        a.exited ||
+        a.hooked ||
+        a.paused ||
+        (a.kind !== 'claude' && a.kind !== 'codex' && a.kind !== 'swairm-cell')
+      )
+        continue;
       const silenceMs = now - a.lastOutputAt;
       const next = estimate(silenceMs, a.mirror.screen(), a.estimated);
       if (!next) continue;
