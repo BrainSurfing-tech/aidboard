@@ -23,7 +23,10 @@ aucun développement avec le faux binaire.
 ## Prérequis humains
 
 - [ ] Mode session livré côté Swairm, puis clone `~/.swairm/deploy` et son environnement mis
-      à jour
+      à jour (fait le 2026-10-25 côté Swairm : `754697c`, `swairm --version` et `swairm doctor`
+      verts, `swairm cell --project <owner/dépôt>` rend l'invite `swairm> ` et sort en 0 sur
+      SIGTERM ; A-I-D le lance **sans** `--project`, la déduction par l'`origin` reste à voir
+      ici. Défaut cosmétique relevé côté Swairm : l'en-tête affiche « lu il y a jamais »)
 - [ ] Un lien `swairm` sur le PATH du shell, qui lance le bon clone
 - [ ] `swairm.bin` posé **en chemin absolu** dans `~/.aid/config.yaml` : le PATH du daemon
       n'est pas celui du shell. Exemple à adapter, le chemin est **à vérifier**, il n'est ni
@@ -31,12 +34,15 @@ aucun développement avec le faux binaire.
 
   ```yaml
   swairm:
-    bin: /Users/jhoubart/.local/bin/swairm
+    bin: /Users/vous/.local/bin/swairm
   ```
 
 - [ ] `swairm --version` répond, puis `aid doctor` : la ligne Swairm n'est pas en `warn` —
       couverture automatique : `test/doctor.test.ts`
-- [ ] Daemon redémarré pour charger sa config (`aid stop` puis `aid`)
+- [ ] Daemon redémarré pour charger sa config (`aid stop` puis `aid`) : la config est lue une
+      seule fois au démarrage, et c'est elle qui décide à la fois de l'apparition du bouton
+      (`server.ts`) et du lancement (`manager.ts`). Changer `swairm.bin` sans redémarrer ne change
+      rien, ni dans un sens ni dans l'autre
 - [ ] Un sujet actif avec worktree, sur un projet doté d'un board ; un dépôt sans board et un
       dépôt sans origin pour les replis S2 ; Q1 (boucle ou plein écran) et Q4 (invite)
       convenues avec l'opérateur
