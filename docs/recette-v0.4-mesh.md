@@ -46,7 +46,7 @@ aucune cell ni token.
   traiter » ; `swarph monitor status --json` dans un terminal dit `running: true` pour
   `morzu-mac` ; `~/swarph_state/morzu-mac/mesh-sidecar/inbox.log` existe — couverture
   automatique : `test/mesh-service.test.ts`, `test/mesh-routes.test.ts`, `e2e/mesh.spec.ts`
-- [ ] 12.c Un DM arrive : depuis le VPS, `swarph mesh dm morzu-mac --kind question "…"`
+- [ ] 12.c Un DM arrive : depuis le VPS, `swarph mesh send morzu-mac --kind question --content "…" --as morzu-vps`
   (ou peer-a depuis `mesh-gw`) ; en moins d'une minute, la pastille passe à « 1 à traiter »,
   la Boîte montre la section « Mesh · morzu-mac » avec le DM dans « À traiter » (émetteur,
   kind, horodatage, fil, contenu **en texte brut** dans le bloc « donnée d'un pair du
@@ -55,7 +55,7 @@ aucune cell ni token.
   notification du navigateur ; un `fyi` n'en déclenche pas ; le clic mène à la Boîte —
   couverture automatique : `test/web/notifications.test.tsx`
 - [ ] 12.e « Vu » retire le DM de la Boîte et décrémente la pastille ; il ne touche pas au
-  ledger de swarph (le DM reste `unread` côté cell : `swarph mesh inbox --peek` le montre
+  ledger de swarph (le DM reste `unread` côté cell : `swarph mesh inbox --peek --as morzu-mac` le montre
   encore) — couverture automatique : `e2e/mesh.spec.ts`, `test/mesh-routes.test.ts`
 - [ ] 12.f « Ouvrir la cell » : choix d'un sujet actif ⇒ un agent `swarph-cell` s'ouvre dans
   le terminal du sujet, c'est la session Claude de la cell (`swarph spawn … --no-starter

@@ -61,7 +61,7 @@ fusion. L'ordre compte : peer-a d'abord (identité), puis le Mac, puis le VPS, p
   puis `~/.local/bin/swarph monitor status --brief`. Sans lui, `morzu-vps` ne peut pas
   répondre à `morzu-mac` pendant la recette.
 - [ ] Pendant la recette : envoyer un DM à `morzu-mac`
-  (`swarph mesh dm morzu-mac --kind question "…"`) pour les lignes 12.c et 12.i.
+  (`swarph mesh send morzu-mac --kind question --content "…" --as morzu-vps`) pour les lignes 12.c et 12.i.
 
 ## Julien — recette et fusion
 
