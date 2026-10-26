@@ -9,43 +9,41 @@ Grille du point 14.6 du plan `docs/chantiers/14-cell-swairm.md`. Deux niveaux :
   cette partie ne peut être cochée depuis une session automatisée : elle exige que
   `swairm cell` existe.
 
-**État : intégration testée sur faux binaire, recette réelle en attente.** Aucun résultat
-réel n'est consigné ici tant que la grille manuelle n'a pas été déroulée.
+**État : recette réelle déroulée partiellement le 2026-10-26**, sur release A-I-D 0.4.0 et
+`swairm` 0.0.0 (board-schema=1, commit 754697c). Voir « Ce que la recette a révélé ».
 
 ## Dépendance externe
 
-Selon le brief du 2026-10-25 (`docs/brief-swairm-cell-cli.md`), `swairm cell` n'existe pas
-encore et `~/.swairm/deploy` est en retard sur `~/Projects/swairm`. Les deux dépôts externes
-n'ont pas été inspectés pour ce chantier. **À vérifier** au moment de la recette : versions
-effectivement déployées, présence de `cell`, de `--version`, et contrat S9. Cela ne bloque
-aucun développement avec le faux binaire.
+Selon le brief du 2026-10-25 (`docs/brief-swairm-cell-cli.md`), `swairm cell` n'existait pas
+encore au moment de l'écriture de ce document. Elle est livrée depuis le 2026-10-25 côté
+Swairm (`754697c`) et déployée dans `~/.swairm/deploy` ; `swairm --version` répond
+`swairm 0.0.0 board-schema=1 commit=754697c`.
 
 ## Prérequis humains
 
-- [ ] Mode session livré côté Swairm, puis clone `~/.swairm/deploy` et son environnement mis
+- [x] Mode session livré côté Swairm, puis clone `~/.swairm/deploy` et son environnement mis
       à jour (fait le 2026-10-25 côté Swairm : `754697c`, `swairm --version` et `swairm doctor`
       verts, `swairm cell --project <owner/dépôt>` rend l'invite `swairm> ` et sort en 0 sur
       SIGTERM ; A-I-D le lance **sans** `--project`, la déduction par l'`origin` reste à voir
       ici. Défaut cosmétique relevé côté Swairm : l'en-tête affiche « lu il y a jamais »)
-- [ ] Un lien `swairm` sur le PATH du shell, qui lance le bon clone
-- [ ] `swairm.bin` posé **en chemin absolu** dans `~/.aid/config.yaml` : le PATH du daemon
-      n'est pas celui du shell. Exemple à adapter, le chemin est **à vérifier**, il n'est ni
-      créé ni confirmé par ce chantier :
+- [x] Un lien `swairm` sur le PATH du shell, qui lance le bon clone
+- [x] `swairm.bin` posé **en chemin absolu** dans `~/.aid/config.yaml` : le PATH du daemon
+      n'est pas celui du shell. Confirmé : `/Users/jhoubart/.local/bin/swairm`
 
   ```yaml
   swairm:
-    bin: /Users/vous/.local/bin/swairm
+    bin: /Users/jhoubart/.local/bin/swairm
   ```
 
-- [ ] `swairm --version` répond, puis `aid doctor` : la ligne Swairm n'est pas en `warn` —
+- [x] `swairm --version` répond, puis `aid doctor` : la ligne Swairm n'est pas en `warn` —
       couverture automatique : `test/doctor.test.ts`
-- [ ] Daemon redémarré pour charger sa config (`aid stop` puis `aid`) : la config est lue une
+- [x] Daemon redémarré pour charger sa config (`aid stop` puis `aid`) : la config est lue une
       seule fois au démarrage, et c'est elle qui décide à la fois de l'apparition du bouton
       (`server.ts`) et du lancement (`manager.ts`). Changer `swairm.bin` sans redémarrer ne change
       rien, ni dans un sens ni dans l'autre
-- [ ] Un sujet actif avec worktree, sur un projet doté d'un board ; un dépôt sans board et un
-      dépôt sans origin pour les replis S2 ; Q1 (boucle ou plein écran) et Q4 (invite)
-      convenues avec l'opérateur
+- [x] Un sujet actif avec worktree, sur un projet doté d'un board (`morzu117/Orgasso`).
+      Dépôt sans board et dépôt sans origin pour les replis S2 : **non disponibles au moment
+      de la recette**, 14.d non testée. Q1 et Q4 : voir « Ce que la recette a révélé »
 
 ## Couverture automatique
 
@@ -76,18 +74,20 @@ prouvé par `test/reprise.test.ts` ; la recette vérifie le cycle réel.
 
 ## Poste : macOS — recette manuelle
 
-- [ ] 14.a Sans configuration : bouton absent ; avec configuration : bouton « Ouvrir la cell
+- [x] 14.a Sans configuration : bouton absent ; avec configuration : bouton « Ouvrir la cell
       Swairm » visible à côté de la cell swarph. Binaire absent : 422 lisible, pas de
       terminal fantôme — couverture automatique : `test/web/sujet.test.tsx`,
       `test/agents-routes.test.ts`
-- [ ] 14.b Depuis le sujet : session `swairm cell`, cwd du worktree, bon projet déduit ;
+- [x] 14.b Depuis le sujet : session `swairm cell`, cwd du worktree, bon projet déduit ;
       commande enregistrée sans `--project`. Aucun lancement de Claude — couverture
       automatique de la commande : `e2e/cell-swairm.spec.ts`
-- [ ] 14.c `help`, `status`, `inbox`, `events` restent dans la session ; un nouvel événement
+- [x] 14.c `help`, `status`, `inbox`, `events` restent dans la session ; un nouvel événement
       apparaît selon S1. Mesurer le démarrage (Q5), ne pas supposer une seconde.
 - [ ] 14.d Sans board ou sans origin : liste des projets, pas de fermeture de session (S2) ;
       confirmer avec l'opérateur que ce repli est bien l'expérience souhaitée.
-- [ ] 14.e Statut estimé : invite stable et écran sans motif de demande résiduel dans les
+      **Non testable à la recette du 2026-10-26** : pas de dépôt sans board ni de dépôt sans
+      origin disponible sur le poste au moment du passage. À redéfinir.
+- [x] 14.e Statut estimé : invite stable et écran sans motif de demande résiduel dans les
       huit dernières lignes non vides ; après **30 s sans aucun octet**, statut inactif estimé
       (la transition arrive au tick suivant, jusqu'à 2 s plus tard) ; un événement réel
       remet la cell en `working`, puis retour au silence. Un heartbeat, une horloge ou un
@@ -97,7 +97,9 @@ prouvé par `test/reprise.test.ts` ; la recette vérifie le cycle réel.
 - [ ] 14.f Redimensionner de 80 à 200 colonnes, masquer puis rouvrir l'onglet, recharger la
       page ; vérifier l'aperçu et l'écran complet ; écran alternatif et souris si retenus
       (Q6) — couverture automatique du resize et de la reconnexion sur le faux CLI :
-      `e2e/cell-swairm.spec.ts` (ne prouve pas la fidélité du vrai CLI)
+      `e2e/cell-swairm.spec.ts` (ne prouve pas la fidélité du vrai CLI).
+      **Resize fait (84×31 puis 118×31), masquage/réouverture et rechargement de page non
+      testés** : voir « Ce que la recette a révélé » pour la troncature observée sur `inbox`.
 - [ ] 14.g Second clic, y compris depuis un autre sujet : 409 avec la cell existante ;
       coexistence d'une cell swarph et d'une cell Swairm ; arrêt puis réouverture réussie —
       couverture automatique : `e2e/cell-swairm.spec.ts`, `test/agents-routes.test.ts`
@@ -112,8 +114,35 @@ prouvé par `test/reprise.test.ts` ; la recette vérifie le cycle réel.
 
 ## Ce que la recette a révélé
 
-**La recette manuelle n'a pas été déroulée** : `swairm cell` n'est pas livrée. Seule la
-couverture automatique a tourné, sur le faux binaire. Rien n'est consigné ici pour le vrai CLI.
+**Recette déroulée partiellement le 2026-10-26**, sur release A-I-D 0.4.0 et `swairm` 0.0.0
+(board-schema=1, commit 754697c), sujet `morzu117/Orgasso` (worktree `restart-dev`).
+14.a, 14.b, 14.c et 14.e passent. 14.d non testable (pas de dépôt de repli disponible).
+14.f partiellement fait. 14.g à 14.j non déroulées (reportées).
+
+- **14.b/14.c — projet déduit, commandes de base** : l'invite s'ouvre sur `morzu117/Orgasso`
+  sans avoir passé `--project`, la déduction par l'`origin` fonctionne. `help`, `status`,
+  `inbox`, `events` répondent correctement avec un contenu cohérent. `clear` n'est pas une
+  commande connue (`commande inconnue : clear (tape help)`) — comportement correct, documenté
+  par `help`.
+- **Q5 (temps de démarrage)** : quasi instantané entre le clic sur le bouton et l'apparition
+  de l'invite `swairm> `.
+- **14.e — statut estimé** : confirme le comportement déjà documenté en issue #66 (Q4) —
+  l'invite `swairm> ` seule n'est pas reconnue comme « attend une réponse » ; le badge de
+  l'agent passe à l'état inactif environ 30 s après le dernier octet, comme prévu par
+  l'heuristique, puis repasse actif sur un vrai événement. Pas d'incompatibilité
+  supplémentaire observée (pas de redessin périodique qui réinitialiserait le silence).
+- **14.f — troncature de `inbox` au redimensionnement** : la ligne `decision/1` de `inbox` est
+  coupée à la largeur exacte du terminal (coupure après « v1) » à 84 colonnes, après « s'es »
+  à 118 colonnes, systématiquement ré-émise à l'identique sur un nouvel appel de `inbox` après
+  resize — pas un wrap manquant côté A-I-D mais vraisemblablement un affichage tabulaire
+  volontairement tronqué côté `swairm` (COLS connu via le PTY). **Non confirmé formellement** :
+  le test de contrôle (`show swairm/capacitor-socle` pour voir si le message complet y
+  apparaît) n'a pas été fait, ni le test masquage/réouverture d'onglet, ni le rechargement de
+  page. À reprendre si ça redevient pertinent.
+- **14.g à 14.j (second clic, sorties `quit`/Ctrl-D/Ctrl-C, cycle du daemon, absence de
+  jeton GitHub)** : non déroulées à cette session — travail détourné vers d'autres irritants
+  A-I-D (branche dédiée séparée). Restent couvertes uniquement par les tests automatisés sur
+  faux binaire.
 
 À savoir pour lancer les e2e sur ce poste (déjà consigné dans `docs/recette-v0.4-mesh.md`) :
 le port 4871 est écouté par `AID.app` (`AID_E2E_PORT=4873` contourne), le gate exige Node 22
