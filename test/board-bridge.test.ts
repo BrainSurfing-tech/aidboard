@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import {
   BoardBridge,
@@ -376,7 +378,10 @@ test('a board take gets past awaiting-human through reconcile, which main.ts cal
   expect(h.takes()).toEqual([]);
   expect(h.session.started).toBe(1);
   expect(['taken', 'closed']).toContain(h.bridge.row(3392)?.phase);
-  const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
+  const main = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../src/daemon/main.ts'),
+    'utf8',
+  );
   expect(main).toContain('board.reconcile(');
 });
 
