@@ -56,7 +56,12 @@ function row(over: Partial<ListedRow> = {}): ListedRow {
   };
 }
 
-function harness(store = snapshotStore()) {
+function listBody(rows: ListedRow[], shape: 'dict' | 'array'): string {
+  if (shape === 'array') return JSON.stringify(rows);
+  return JSON.stringify({ obligations: rows, as_of: '2026-10-29T19:00:00Z' });
+}
+
+function harness(store = snapshotStore(), shape: 'dict' | 'array' = 'dict') {
   const calls: string[][] = [];
   const rows = [row()];
   let projectId = 17;
@@ -101,7 +106,7 @@ function harness(store = snapshotStore()) {
     calls.push(args);
     const text = args.join(' ');
     if (text.includes('obligations list')) {
-      return { ok: true, stdout: JSON.stringify(rows), stderr: '' };
+      return { ok: true, stdout: listBody(rows, shape), stderr: '' };
     }
     if (text.includes('cards show')) {
       return { ok: true, stdout: JSON.stringify({ id: 1359, project_id: projectId }), stderr: '' };
@@ -219,7 +224,7 @@ test('lost take ack does not take a second time', async () => {
       real.push(args);
       const text = args.join(' ');
       if (text.includes('obligations list')) {
-        return { ok: true, stdout: JSON.stringify(h.rows), stderr: '' };
+        return { ok: true, stdout: listBody(h.rows, 'dict'), stderr: '' };
       }
       if (text.includes('cards show')) {
         return { ok: true, stdout: JSON.stringify({ id: 1359, project_id: 17 }), stderr: '' };
@@ -274,7 +279,7 @@ test('lost close ack does not close a second time and ends the session', async (
       h.calls.push(args);
       const text = args.join(' ');
       if (text.includes('obligations list')) {
-        return { ok: true, stdout: JSON.stringify(h.rows), stderr: '' };
+        return { ok: true, stdout: listBody(h.rows, 'dict'), stderr: '' };
       }
       if (text.includes('cards show')) {
         return { ok: true, stdout: JSON.stringify({ id: 1359, project_id: 17 }), stderr: '' };
@@ -313,7 +318,10 @@ test('a released row is terminal even when state still says offered', async () =
 
 test('autoTake stays off and a json accept closes with --evidence-json', async () => {
   const h = harness();
-  h.rows[0] = row({ accept_format: 'json' });
+  h.rows[0] = {
+    ...row({ accept_format: 'json' }),
+    conditions: [{ id: 'c1' }, { id: 'c2' }],
+  } as ListedRow;
   await h.bridge.ingest(offer(1, LINE));
   h.topics.current = 'active';
   await h.bridge.reconcile();
@@ -325,13 +333,34 @@ test('autoTake stays off and a json accept closes with --evidence-json', async (
   expect(flag).toBeGreaterThan(0);
   const raw = close[flag + 1];
   if (!raw) throw new Error('missing evidence json');
-  const payload = JSON.parse(raw) as { all: string };
-  expect(payload.all).toContain(URL);
-  expect(payload.all).toContain(SHA);
+  const payload = JSON.parse(raw) as Record<string, string>;
+  expect(payload.all).toBeUndefined();
+  expect(Object.keys(payload).sort()).toEqual(['c1', 'c2']);
+  expect(payload.c1).toContain(URL);
+  expect(payload.c1).toContain(SHA);
+  expect(payload.c2).toContain(URL);
   expect(h.calls.some((a) => a.includes('inbox') || a.includes('--token'))).toBe(false);
   expect(h.gateCalls).toBeGreaterThan(0);
   expect(h.session.started).toBe(1);
   expect(h.session.ended).toBe(1);
+});
+
+test('a bare array list still matches, and json evidence is not keyed all', async () => {
+  const h = harness(snapshotStore(), 'array');
+  h.rows[0] = {
+    ...row({ accept_format: 'json' }),
+    conditions: [{ id: 'c1' }, { id: 'c2' }],
+  } as ListedRow;
+  await h.bridge.ingest(offer(1, LINE));
+  h.topics.current = 'active';
+  await h.bridge.acceptHuman(3392);
+  const close = h.closes()[0];
+  if (!close) throw new Error('close was not called');
+  const raw = close[close.indexOf('--evidence-json') + 1];
+  if (!raw) throw new Error('missing evidence json');
+  const payload = JSON.parse(raw) as Record<string, string>;
+  expect(payload.all).toBeUndefined();
+  expect(Object.keys(payload).sort()).toEqual(['c1', 'c2']);
 });
 
 test('the gate blocks the close', async () => {
