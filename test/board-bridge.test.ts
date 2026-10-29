@@ -323,7 +323,9 @@ test('autoTake stays off and a json accept closes with --evidence-json', async (
   if (!close) throw new Error('close was not called');
   const flag = close.indexOf('--evidence-json');
   expect(flag).toBeGreaterThan(0);
-  const payload = JSON.parse(close[flag + 1]) as { all: string };
+  const raw = close[flag + 1];
+  if (!raw) throw new Error('missing evidence json');
+  const payload = JSON.parse(raw) as { all: string };
   expect(payload.all).toContain(URL);
   expect(payload.all).toContain(SHA);
   expect(h.calls.some((a) => a.includes('inbox') || a.includes('--token'))).toBe(false);
