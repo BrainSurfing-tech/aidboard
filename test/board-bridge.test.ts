@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import {
   BoardBridge,
@@ -361,6 +362,22 @@ test('a bare array list still matches, and json evidence is not keyed all', asyn
   const payload = JSON.parse(raw) as Record<string, string>;
   expect(payload.all).toBeUndefined();
   expect(Object.keys(payload).sort()).toEqual(['c1', 'c2']);
+});
+
+test('a board take gets past awaiting-human through reconcile, which main.ts calls', async () => {
+  const h = harness();
+  await h.bridge.ingest(offer(1, LINE));
+  h.topics.current = 'active';
+  // The person accepted on the board. autoTake stays off and acceptHuman is not called.
+  h.rows[0] = row({ ...h.rows[0], taken_at: 'T', state: 'open' });
+  await h.bridge.reconcile();
+  expect(h.topics.created).toBe(1);
+  expect(h.topics.current).toBe('active');
+  expect(h.takes()).toEqual([]);
+  expect(h.session.started).toBe(1);
+  expect(['taken', 'closed']).toContain(h.bridge.row(3392)?.phase);
+  const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
+  expect(main).toContain('board.reconcile(');
 });
 
 test('the gate blocks the close', async () => {
