@@ -375,9 +375,12 @@ export class BoardBridge {
       this.persist();
     }
     if (rec.phase === 'awaiting-human') {
-      if (!this.autoTake && !rec.humanAccepted) return;
+      // A person can take the row on the board while autoTake is off. That
+      // taken_at is the accept: do not sit in awaiting-human until acceptHuman.
       if (live?.taken_at) {
         rec.phase = 'taken';
+      } else if (!this.autoTake && !rec.humanAccepted) {
+        return;
       } else if (rec.takeSent) {
         return;
       } else {

@@ -163,6 +163,7 @@ export async function startDaemon(
       else log('ollama injoignable : recherche FTS5 seule');
     }
     let maintenanceTimer: NodeJS.Timeout | null = null;
+    let boardTimer: NodeJS.Timeout | null = null;
     if (chatModel) {
       worker?.start();
       const tick = () => {
@@ -257,6 +258,15 @@ export async function startDaemon(
           },
         })
       : null;
+    if (board) {
+      // autoTake stays off. A row the person already took still has to leave awaiting-human.
+      const beat = () => {
+        void board.reconcile();
+      };
+      beat();
+      boardTimer = setInterval(beat, 30_000);
+      boardTimer.unref();
+    }
     const mesh = config.mesh.cell
       ? new MeshService({
           config: config.mesh,
@@ -332,6 +342,7 @@ export async function startDaemon(
         agents.dispose();
         updates?.dispose();
         if (maintenanceTimer) clearInterval(maintenanceTimer);
+        if (boardTimer) clearInterval(boardTimer);
         await worker?.stop();
         await mirror.flush();
         await app.close();

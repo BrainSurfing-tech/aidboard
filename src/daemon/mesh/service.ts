@@ -21,7 +21,10 @@ export interface MeshServiceDeps {
   timeoutMs?: number;
   now?: () => string;
   /** Pont board (carte #1359). Absent : l'inbox n'ouvre aucun sujet. */
-  board?: { ingest(dm: InboxDm): Promise<void> | void };
+  board?: {
+    ingest(dm: InboxDm): Promise<void> | void;
+    reconcile?(): Promise<void> | void;
+  };
 }
 
 /** `swarph monitor status --json` : ce qu'on en garde. */
@@ -126,6 +129,9 @@ export class MeshService {
       const { monitor, pending } = await this.monitorStatus();
       const connected = monitor === 'running';
       if (connected) this.startFollower();
+      void Promise.resolve(this.deps.board?.reconcile?.()).catch((err) =>
+        this.deps.log(`board : ${(err as Error).message}`),
+      );
       this.publish({
         connected,
         tailscale,
@@ -316,9 +322,10 @@ export class MeshService {
           data: { ...dm, createdAt: dm.createdAt ?? undefined },
         });
         if (!this.deps.board) return;
-        void Promise.resolve(this.deps.board.ingest(dm)).catch((err) =>
-          this.deps.log(`board : ${(err as Error).message}`),
-        );
+        const board = this.deps.board;
+        void Promise.resolve(board.ingest(dm))
+          .then(() => board.reconcile?.())
+          .catch((err) => this.deps.log(`board : ${(err as Error).message}`));
       },
     });
     this.follower.start();
