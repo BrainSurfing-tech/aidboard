@@ -1,3 +1,4 @@
+import { execFile, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -6,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { monotonicFactory } from 'ulid';
 import { isValidSlug, slugify } from '../../shared/slug.js';
 import { type ActionContext, scriptEnv, startAction } from '../actions/service.js';
+import type { BoardBridge } from '../mesh/boardBridge.js';
 import { diffCommand, editorCommand, openDiffInEditor, openInEditor } from '../actions/editor.js';
 import { findAssetDir } from '../assets.js';
 import type { AidConfig } from '../config.js';
@@ -82,6 +84,8 @@ export interface TopicRouteDeps {
   config: AidConfig;
   actions: ActionContext;
   indexer: Indexer;
+  /** Pont board (carte #1359). Branché ici pour appeler le même `topic.create`. */
+  board?: BoardBridge;
 }
 
 interface TopicRow {
@@ -104,109 +108,279 @@ interface WorkspaceRow {
   remote: string | null;
 }
 
-export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps): void {
-  const scripts = findAssetDir('scripts/git', 'topic-create.sh');
-
-  app.post('/api/topics', { schema: { body: CreateBody } }, async (req, reply) => {
-    const body = req.body as { workspaceId: string; title: string; type: string; slug?: string };
-    const ws = deps.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(body.workspaceId) as
-      WorkspaceRow | undefined;
-    if (!ws) throw new AidHttpError(404, 'workspace inconnu');
-    let slug: string;
-    if (body.slug !== undefined) {
-      if (!isValidSlug(body.slug)) throw new AidHttpError(422, `slug invalide : ${body.slug}`);
-      slug = body.slug;
-    } else {
-      try {
-        slug = slugify(body.title);
-      } catch (err) {
-        throw new AidHttpError(422, (err as Error).message);
-      }
+export function beginTopic(
+  deps: TopicRouteDeps,
+  scripts: string,
+  body: { workspaceId: string; title: string; type: string; slug?: string; branch?: string },
+): { actionId: string; slug: string; branch: string; topicId: string; worktree: string } {
+  const ws = deps.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(body.workspaceId) as
+    | WorkspaceRow
+    | undefined;
+  if (!ws) throw new AidHttpError(404, 'workspace inconnu');
+  let slug: string;
+  if (body.slug !== undefined) {
+    if (!isValidSlug(body.slug)) throw new AidHttpError(422, `slug invalide : ${body.slug}`);
+    slug = body.slug;
+  } else {
+    try {
+      slug = slugify(body.title);
+    } catch (err) {
+      throw new AidHttpError(422, (err as Error).message);
     }
-    if (
-      deps.db.prepare('SELECT 1 FROM topics WHERE workspace_id = ? AND slug = ?').get(ws.id, slug)
-    ) {
-      throw new AidHttpError(409, `un sujet « ${slug} » existe déjà dans ce workspace`);
-    }
-    const topicId = `tp_${ulid()}`;
-    const branch = `${body.type}/${slug}`;
-    const worktree = join(ws.worktrees_dir, slug);
-    // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
-    const indexed = deps.engine.detect(ws.root);
-    const now = new Date().toISOString();
+  }
+  const slugTaken = deps.db
+    .prepare('SELECT 1 FROM topics WHERE workspace_id = ? AND slug = ?')
+    .get(ws.id, slug);
+  if (slugTaken) {
+    throw new AidHttpError(409, `un sujet « ${slug} » existe déjà dans ce workspace`);
+  }
+  const topicId = `tp_${ulid()}`;
+  const branch = body.branch ?? `${body.type}/${slug}`;
+  const worktree = join(ws.worktrees_dir, slug);
+  // D6 : on n'indexe que si le dépôt principal a déjà adopté l'index
+  const indexed = deps.engine.detect(ws.root);
+  const now = new Date().toISOString();
 
-    // D15 : le sujet existe en `draft` dès la requête, avant que le script ne tourne.
-    deps.actions.store.append(
-      {
+  // D15 : le sujet existe en `draft` dès la requête, avant que le script ne tourne.
+  deps.actions.store.append(
+    {
+      source: 'daemon',
+      type: 'topic.state',
+      workspaceId: ws.id,
+      topicId,
+      data: { state: 'draft', indexState: indexed ? 'indexing' : 'disabled' },
+    },
+    (tx) => {
+      tx.prepare(
+        'INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL)',
+      ).run(
+        topicId,
+        ws.id,
+        slug,
+        body.title,
+        body.type,
+        branch,
+        ws.base_branch,
+        worktree,
+        'draft',
+        indexed ? 'indexing' : 'disabled',
+        now,
+        now,
+      );
+      tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
+        `run_${ulid()}`,
+        topicId,
+        now,
+      );
+    },
+  );
+
+  const { actionId } = startAction(deps.actions, {
+    workspaceId: ws.id,
+    topicId,
+    action: 'topic.create',
+    script: join(scripts, 'topic-create.sh'),
+    cwd: ws.root,
+    timeoutMs: FIVE_MIN,
+    data: { slug, branch },
+    env: scriptEnv(process.env, deps.config.env.strip, {
+      AID_REPO_ROOT: ws.root,
+      AID_TOPIC: topicId,
+      AID_SLUG: slug,
+      AID_BRANCH: branch,
+      AID_BASE: ws.base_branch,
+      AID_REMOTE: ws.remote ?? '',
+      AID_WORKTREE: worktree,
+    }),
+    afterSuccess: () => {
+      deps.actions.store.append({
         source: 'daemon',
         type: 'topic.state',
         workspaceId: ws.id,
         topicId,
-        data: { state: 'draft', indexState: indexed ? 'indexing' : 'disabled' },
-      },
-      (tx) => {
-        tx.prepare(
-          'INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL)',
-        ).run(
-          topicId,
-          ws.id,
-          slug,
-          body.title,
-          body.type,
-          branch,
-          ws.base_branch,
-          worktree,
-          'draft',
-          indexed ? 'indexing' : 'disabled',
-          now,
-          now,
-        );
-        tx.prepare("INSERT INTO runs VALUES (?, ?, 'standard', 'open', ?)").run(
-          `run_${ulid()}`,
-          topicId,
-          now,
-        );
-      },
-    );
+        data: { state: 'active' },
+      });
+      if (indexed) deps.indexer.start({ id: topicId, workspaceId: ws.id, worktree });
+      return { topicId };
+    },
+    // Le brouillon n'a rien créé sur disque : un échec du script le fait disparaître,
+    // le slug redevient immédiatement utilisable (même suppression que topic.setup-ignorer).
+    afterFailure: () => {
+      deps.db.transaction(() => {
+        deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(topicId);
+        deps.db.prepare('DELETE FROM topics WHERE id = ?').run(topicId);
+      })();
+    },
+  });
+  return { actionId, slug, branch, topicId, worktree };
+}
 
-    const { actionId } = startAction(deps.actions, {
-      workspaceId: ws.id,
-      topicId,
-      action: 'topic.create',
-      script: join(scripts, 'topic-create.sh'),
-      cwd: ws.root,
-      timeoutMs: FIVE_MIN,
-      data: { slug, branch },
-      env: scriptEnv(process.env, deps.config.env.strip, {
-        AID_REPO_ROOT: ws.root,
-        AID_TOPIC: topicId,
-        AID_SLUG: slug,
-        AID_BRANCH: branch,
-        AID_BASE: ws.base_branch,
-        AID_REMOTE: ws.remote ?? '',
-        AID_WORKTREE: worktree,
-      }),
-      afterSuccess: () => {
-        deps.actions.store.append({
-          source: 'daemon',
-          type: 'topic.state',
-          workspaceId: ws.id,
-          topicId,
-          data: { state: 'active' },
+function attachBoardTopics(bridge: BoardBridge, deps: TopicRouteDeps, scripts: string): void {
+  const mesh = deps.config.mesh;
+  let child: ChildProcess | null = null;
+  bridge.bind({
+    topics: {
+      async create(cardId) {
+        const ws = deps.db.prepare('SELECT id FROM workspaces ORDER BY id LIMIT 1').get() as
+          | { id: string }
+          | undefined;
+        if (!ws) return { ok: false as const, error: 'aucun workspace' };
+        try {
+          const created = beginTopic(deps, scripts, {
+            workspaceId: ws.id,
+            title: `card #${cardId}`,
+            type: 'feat',
+            slug: `card-${cardId}`,
+            branch: `card-${cardId}`,
+          });
+          return { ok: true, id: created.topicId, worktree: created.worktree };
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message };
+        }
+      },
+      async state(id) {
+        const row = deps.db.prepare('SELECT state FROM topics WHERE id = ?').get(id) as
+          | { state: string }
+          | undefined;
+        return row?.state ?? 'missing';
+      },
+      async test(id) {
+        const topic = topicRow(deps, id);
+        if (!topic) return { ok: false as const };
+        let ok = false;
+        const { done } = startAction(deps.actions, {
+          workspaceId: topic.workspace_id,
+          topicId: id,
+          action: 'topic.test',
+          script: join(scripts, 'topic-test.sh'),
+          cwd: topic.worktree,
+          timeoutMs: FIVE_MIN,
+          env: scriptEnv(process.env, deps.config.env.strip, {}),
+          afterSuccess: () => {
+            ok = true;
+          },
         });
-        if (indexed) deps.indexer.start({ id: topicId, workspaceId: ws.id, worktree });
-        return { topicId };
+        try {
+          await done;
+        } catch {
+          return { ok: false as const };
+        }
+        return { ok };
       },
-      // Le brouillon n'a rien créé sur disque : un échec du script le fait disparaître,
-      // le slug redevient immédiatement utilisable (même suppression que topic.setup-ignorer).
-      afterFailure: () => {
-        deps.db.transaction(() => {
-          deps.db.prepare('DELETE FROM runs WHERE topic_id = ?').run(topicId);
-          deps.db.prepare('DELETE FROM topics WHERE id = ?').run(topicId);
-        })();
+      async pr(id) {
+        const topic = topicRow(deps, id);
+        if (!topic) return { ok: false as const };
+        let url = '';
+        const { done } = startAction(deps.actions, {
+          workspaceId: topic.workspace_id,
+          topicId: id,
+          action: 'topic.pr',
+          script: join(scripts, 'topic-pr.sh'),
+          cwd: topic.worktree,
+          timeoutMs: TWO_MIN,
+          env: scriptEnv(process.env, deps.config.env.strip, {
+            AID_BRANCH: topic.branch,
+            AID_BASE: topic.base,
+            AID_PR_TITLE: topic.title,
+            AID_PR_BODY: `card #${cardIdOf(topic.slug)}`,
+          }),
+          afterSuccess: (out) => {
+            url = typeof out.result.url === 'string' ? out.result.url : '';
+            const prNumber = typeof out.result.number === 'number' ? out.result.number : null;
+            deps.actions.store.append({
+              source: 'daemon',
+              type: 'topic.pr',
+              workspaceId: topic.workspace_id,
+              topicId: id,
+              data: { prNumber, prUrl: url || null },
+            });
+          },
+        });
+        try {
+          await done;
+        } catch {
+          return { ok: false as const };
+        }
+        if (!url) return { ok: false as const };
+        const head = await git(topic.worktree, ['rev-parse', 'HEAD']);
+        if (!head.ok || !/^[0-9a-f]{40}$/.test(head.stdout)) return { ok: false as const };
+        return { ok: true, url, sha: head.stdout };
       },
+    },
+    gate: async (topicId) => {
+      const row = deps.db.prepare('SELECT pr_url, state FROM topics WHERE id = ?').get(topicId) as
+        | { pr_url: string | null; state: string }
+        | undefined;
+      return Boolean(row?.pr_url && (row.state === 'review' || row.state === 'active'));
+    },
+    session: {
+      async start(req) {
+        const role = mesh.cellFile || mesh.cell;
+        const env: NodeJS.ProcessEnv = {};
+        if (process.env.PATH) env.PATH = process.env.PATH;
+        if (process.env.HOME) env.HOME = process.env.HOME;
+        if (mesh.gateway) env.MESH_GATEWAY_URL = mesh.gateway;
+        if (mesh.stateRoot) env.SWARPH_STATE = mesh.stateRoot;
+        writeFileSync(join(req.cwd, 'PROMPT.md'), `${req.prompt}\n`);
+        child = execFile(mesh.bin, ['spawn', role, '--no-starter', '--no-banner'], {
+          cwd: req.cwd,
+          env,
+        });
+        child.stdin?.on('error', () => undefined);
+        child.stdin?.end();
+        child.on('error', () => undefined);
+      },
+      async end() {
+        child?.kill('SIGTERM');
+        child = null;
+      },
+    },
+  });
+}
+
+function topicRow(deps: TopicRouteDeps, id: string):
+  | {
+      workspace_id: string;
+      worktree: string;
+      branch: string;
+      base: string;
+      title: string;
+      slug: string;
+    }
+  | undefined {
+  return deps.db
+    .prepare(
+      'SELECT workspace_id, worktree, branch, base, title, slug FROM topics WHERE id = ?',
+    )
+    .get(id) as
+    | {
+        workspace_id: string;
+        worktree: string;
+        branch: string;
+        base: string;
+        title: string;
+        slug: string;
+      }
+    | undefined;
+}
+
+function cardIdOf(slug: string): string {
+  return slug.replace(/^card-/, '');
+}
+
+export function registerTopicRoutes(app: FastifyInstance, deps: TopicRouteDeps): void {
+  const scripts = findAssetDir('scripts/git', 'topic-create.sh');
+  if (deps.board) attachBoardTopics(deps.board, deps, scripts);
+
+  app.post('/api/topics', { schema: { body: CreateBody } }, async (req, reply) => {
+    const body = req.body as { workspaceId: string; title: string; type: string; slug?: string };
+    const created = beginTopic(deps, scripts, body);
+    return reply.code(202).send({
+      actionId: created.actionId,
+      slug: created.slug,
+      branch: created.branch,
+      topicId: created.topicId,
     });
-    return reply.code(202).send({ actionId, slug, branch, topicId });
   });
 
   // Chronologie de l'écran archive (06.10) : aucun journal par sujet n'existait encore.

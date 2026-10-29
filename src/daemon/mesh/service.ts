@@ -3,7 +3,7 @@ import type { Db } from '../db.js';
 import type { EventStore } from '../events/store.js';
 import type { MeshDm, MeshMonitor, MeshState, MeshTailscale } from '../../shared/model.js';
 import { type MeshExec, meshExec } from './exec.js';
-import { InboxFollower } from './inbox.js';
+import { InboxFollower, type InboxDm } from './inbox.js';
 import { meshPaths } from './paths.js';
 import { tailscaleState } from './tailscale.js';
 
@@ -20,6 +20,8 @@ export interface MeshServiceDeps {
   pollMs?: number;
   timeoutMs?: number;
   now?: () => string;
+  /** Pont board (carte #1359). Absent : l'inbox n'ouvre aucun sujet. */
+  board?: { ingest(dm: InboxDm): Promise<void> | void };
 }
 
 /** `swarph monitor status --json` : ce qu'on en garde. */
@@ -307,12 +309,17 @@ export class MeshService {
       cursor: this.cursorFromDb(),
       pollMs: this.deps.pollMs,
       log: this.deps.log,
-      onDm: (dm) =>
+      onDm: (dm) => {
         this.deps.store.append({
           source: 'swarph',
           type: 'mesh.dm',
           data: { ...dm, createdAt: dm.createdAt ?? undefined },
-        }),
+        });
+        if (!this.deps.board) return;
+        void Promise.resolve(this.deps.board.ingest(dm)).catch((err) =>
+          this.deps.log(`board : ${(err as Error).message}`),
+        );
+      },
     });
     this.follower.start();
   }

@@ -29,6 +29,7 @@ import { registerStateRoutes } from './routes/state.js';
 import { registerMemoryRoutes } from './routes/memory.js';
 import { registerStructuralRoutes } from './routes/structural.js';
 import { registerMeshRoutes } from './routes/mesh.js';
+import type { BoardBridge } from './mesh/boardBridge.js';
 import type { MeshService } from './mesh/service.js';
 import type { MemoryProposals } from './memory/maintain.js';
 import type { MemoryService } from './memory/service.js';
@@ -58,6 +59,8 @@ export interface ServerDeps {
   install?: () => { mode: InstallMode; version: string };
   /** 12.4 : null ou absent = mesh désactivé, les routes /api/mesh répondent 404 */
   mesh?: MeshService | null;
+  /** Pont board (carte #1359), branché sur topic.create par les routes sujets. */
+  board?: BoardBridge;
   devOrigin?: string;
   webRoot?: string | null;
   logger?: boolean;
@@ -156,6 +159,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     engine: structural,
     actions: { store: deps.store, paths: deps.paths, queue: new WorkspaceQueue() },
     indexer,
+    board: deps.board,
   });
   registerStructuralRoutes(app, { db: deps.db, engine: structural, store: deps.store, indexer });
   registerEventRoutes(app, deps.db, deps.store);
