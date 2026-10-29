@@ -53,6 +53,7 @@ export interface ListedRow {
   state?: string;
   accept_format?: string | null;
   accept?: string | null;
+  conditions?: { id?: string }[] | null;
 }
 
 export type Phase =
@@ -149,6 +150,35 @@ function parseJsonValue(stdout: string): unknown {
     return JSON.parse(stdout.slice(at));
   } catch {
     return null;
+  }
+}
+
+/** `swarph board obligations list --json` is {"obligations":[...],"as_of":...}. A bare array still counts. */
+function obligationsOf(stdout: string): ListedRow[] {
+  const parsed = parseJsonValue(stdout);
+  if (Array.isArray(parsed)) return parsed as ListedRow[];
+  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    const rows = (parsed as { obligations?: unknown }).obligations;
+    if (Array.isArray(rows)) return rows as ListedRow[];
+  }
+  return [];
+}
+
+/** Pass ids of a json accept (c1..cN). The prose blob id "all" is not one of them. */
+function passIds(row: ListedRow | undefined): string[] {
+  const fromRow = (row?.conditions ?? [])
+    .map((c) => c.id)
+    .filter((id): id is string => typeof id === 'string' && /^c\d+$/.test(id));
+  if (fromRow.length > 0) return fromRow;
+  if (!row?.accept) return [];
+  try {
+    const obj = JSON.parse(row.accept) as { pass?: { id?: unknown }[] };
+    if (!Array.isArray(obj.pass)) return [];
+    return obj.pass
+      .map((p) => p.id)
+      .filter((id): id is string => typeof id === 'string' && /^c\d+$/.test(id));
+  } catch {
+    return [];
   }
 }
 
@@ -410,7 +440,11 @@ export class BoardBridge {
       'pass',
     ];
     if (format === 'json') {
-      argv.push('--evidence-json', JSON.stringify({ all: `${rec.prUrl} ${rec.sha}` }));
+      const ids = passIds(live);
+      const evidence: Record<string, string> = {};
+      const text = `${rec.prUrl} ${rec.sha}`;
+      for (const id of ids) evidence[id] = text;
+      argv.push('--evidence-json', JSON.stringify(evidence));
     } else {
       argv.push('--evidence', body);
     }
@@ -441,9 +475,7 @@ export class BoardBridge {
       this.cell,
     ]);
     if (!res.ok) return [];
-    const parsed = parseJsonValue(res.stdout);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as ListedRow[];
+    return obligationsOf(res.stdout);
   }
 
   private async projectIs(cardId: number): Promise<boolean> {
