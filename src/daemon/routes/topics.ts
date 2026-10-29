@@ -114,8 +114,7 @@ export function beginTopic(
   body: { workspaceId: string; title: string; type: string; slug?: string; branch?: string },
 ): { actionId: string; slug: string; branch: string; topicId: string; worktree: string } {
   const ws = deps.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(body.workspaceId) as
-    | WorkspaceRow
-    | undefined;
+    WorkspaceRow | undefined;
   if (!ws) throw new AidHttpError(404, 'workspace inconnu');
   let slug: string;
   if (body.slug !== undefined) {
@@ -222,8 +221,7 @@ function attachBoardTopics(bridge: BoardBridge, deps: TopicRouteDeps, scripts: s
     topics: {
       async create(cardId) {
         const ws = deps.db.prepare('SELECT id FROM workspaces ORDER BY id LIMIT 1').get() as
-          | { id: string }
-          | undefined;
+          { id: string } | undefined;
         if (!ws) return { ok: false as const, error: 'aucun workspace' };
         try {
           const created = beginTopic(deps, scripts, {
@@ -240,8 +238,7 @@ function attachBoardTopics(bridge: BoardBridge, deps: TopicRouteDeps, scripts: s
       },
       async state(id) {
         const row = deps.db.prepare('SELECT state FROM topics WHERE id = ?').get(id) as
-          | { state: string }
-          | undefined;
+          { state: string } | undefined;
         return row?.state ?? 'missing';
       },
       async test(id) {
@@ -309,8 +306,7 @@ function attachBoardTopics(bridge: BoardBridge, deps: TopicRouteDeps, scripts: s
     },
     gate: async (topicId) => {
       const row = deps.db.prepare('SELECT pr_url, state FROM topics WHERE id = ?').get(topicId) as
-        | { pr_url: string | null; state: string }
-        | undefined;
+        { pr_url: string | null; state: string } | undefined;
       return Boolean(row?.pr_url && (row.state === 'review' || row.state === 'active'));
     },
     session: {
@@ -338,7 +334,10 @@ function attachBoardTopics(bridge: BoardBridge, deps: TopicRouteDeps, scripts: s
   });
 }
 
-function topicRow(deps: TopicRouteDeps, id: string):
+function topicRow(
+  deps: TopicRouteDeps,
+  id: string,
+):
   | {
       workspace_id: string;
       worktree: string;
@@ -349,9 +348,7 @@ function topicRow(deps: TopicRouteDeps, id: string):
     }
   | undefined {
   return deps.db
-    .prepare(
-      'SELECT workspace_id, worktree, branch, base, title, slug FROM topics WHERE id = ?',
-    )
+    .prepare('SELECT workspace_id, worktree, branch, base, title, slug FROM topics WHERE id = ?')
     .get(id) as
     | {
         workspace_id: string;
