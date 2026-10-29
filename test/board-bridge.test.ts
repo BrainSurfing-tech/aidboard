@@ -63,7 +63,7 @@ function harness(store = snapshotStore()) {
   const topics = {
     created: 0,
     fail: false,
-    state: 'draft',
+    current: 'draft',
     testOk: true,
     prOk: true,
     async create() {
@@ -72,7 +72,7 @@ function harness(store = snapshotStore()) {
       return { ok: true as const, id: 'tp_1', worktree: '/tmp/wt' };
     },
     async state() {
-      return this.state;
+      return this.current;
     },
     async test() {
       return { ok: this.testOk };
@@ -167,7 +167,7 @@ test('a question line is not a trigger even when obligation_id is set', async ()
 test('duplicate offer creates one topic and takes once', async () => {
   const h = harness();
   await h.bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await h.bridge.ingest(offer(2, LINE));
   expect(h.topics.created).toBe(1);
   expect(h.takes()).toEqual([]);
@@ -198,7 +198,7 @@ test('failed topic create does not take', async () => {
   const h = harness();
   h.topics.fail = true;
   await h.bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await h.bridge.acceptHuman(3392);
   expect(h.topics.created).toBe(1);
   expect(h.takes()).toEqual([]);
@@ -237,7 +237,7 @@ test('lost take ack does not take a second time', async () => {
     },
   });
   await bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await bridge.acceptHuman(3392);
   await bridge.reconcile();
   expect(takeCalls).toBe(1);
@@ -248,10 +248,10 @@ test('restart reconciles the saved row and does not create again', async () => {
   const first = harness(store);
   await first.bridge.ingest(offer(1, LINE));
   expect(first.topics.created).toBe(1);
-  first.topics.state = 'active';
+  first.topics.current = 'active';
   const second = harness(store);
   second.topics.created = first.topics.created;
-  second.topics.state = 'active';
+  second.topics.current = 'active';
   // The saved row points at tp_1. The new bridge must not call create.
   const createdBefore = second.topics.created;
   await second.bridge.reconcile();
@@ -292,7 +292,7 @@ test('lost close ack does not close a second time and ends the session', async (
     },
   });
   await bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await bridge.acceptHuman(3392);
   await bridge.reconcile();
   expect(closeCalls).toBe(1);
@@ -304,7 +304,7 @@ test('a released row is terminal even when state still says offered', async () =
   const h = harness();
   h.rows[0] = row({ status: 'released', state: 'offered (fusion-test)', taken_at: null });
   await h.bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await h.bridge.acceptHuman(3392);
   expect(h.topics.created).toBe(0);
   expect(h.takes()).toEqual([]);
@@ -315,12 +315,12 @@ test('autoTake stays off and a json accept closes with --evidence-json', async (
   const h = harness();
   h.rows[0] = row({ accept_format: 'json' });
   await h.bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await h.bridge.reconcile();
   expect(h.takes()).toEqual([]);
   await h.bridge.acceptHuman(3392);
   const close = h.closes()[0];
-  expect(close).toBeDefined();
+  if (!close) throw new Error('close was not called');
   const flag = close.indexOf('--evidence-json');
   expect(flag).toBeGreaterThan(0);
   const payload = JSON.parse(close[flag + 1]) as { all: string };
@@ -336,7 +336,7 @@ test('the gate blocks the close', async () => {
   const h = harness();
   h.setGate(false);
   await h.bridge.ingest(offer(1, LINE));
-  h.topics.state = 'active';
+  h.topics.current = 'active';
   await h.bridge.acceptHuman(3392);
   expect(h.closes()).toEqual([]);
   expect(h.session.ended).toBe(0);
