@@ -1,7 +1,7 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { AddressInfo } from 'node:net';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { type AidConfig, loadConfig, writeDefaultConfigIfAbsent } from './config.js';
@@ -26,6 +26,9 @@ import { MemoryMirror } from './memory/mirror.js';
 import { MemoryWorker } from './memory/worker.js';
 import { MemoryService } from './memory/service.js';
 import { MemoryStore } from './memory/store.js';
+import { BoardBridge, fileStore } from './mesh/boardBridge.js';
+import { meshExec } from './mesh/exec.js';
+import { meshPaths } from './mesh/paths.js';
 import { MeshService } from './mesh/service.js';
 import { acquireLock } from './lock.js';
 import { ensureHome, resolvePaths } from './paths.js';
@@ -160,6 +163,7 @@ export async function startDaemon(
       else log('ollama injoignable : recherche FTS5 seule');
     }
     let maintenanceTimer: NodeJS.Timeout | null = null;
+    let boardTimer: NodeJS.Timeout | null = null;
     if (chatModel) {
       worker?.start();
       const tick = () => {
@@ -211,15 +215,67 @@ export async function startDaemon(
       timeoutMs: config.structural.timeoutMs,
       exclude: config.structural.exclude,
     });
-    // 12.3 : le service mesh existe seulement si une cell est configurée (D39) ; jamais de connexion automatique
+    // 12.3 : le service mesh existe seulement si une cell est configurée (D39) ; jamais de connexion automatique.
+    // Carte #1359 : le pont board est créé avec lui, autoTake éteint. Les sujets sont branchés
+    // dans registerTopicRoutes, sur le même topic.create que la route.
+    const userHome = process.env.HOME ?? homedir();
+    const board = config.mesh.cell
+      ? new BoardBridge({
+          cell: config.mesh.cell,
+          projectId: 17,
+          autoTake: false,
+          store: fileStore(join(paths.home, 'board-bridge.json')),
+          cli: async (args) => {
+            const sw = meshPaths(config.mesh, userHome);
+            const env: NodeJS.ProcessEnv = { SWARPH_STATE: sw.stateRoot };
+            if (process.env.PATH) env.PATH = process.env.PATH;
+            if (process.env.HOME) env.HOME = process.env.HOME;
+            if (config.mesh.gateway) env.MESH_GATEWAY_URL = config.mesh.gateway;
+            const r = await meshExec(config.mesh.bin, args, { env, timeoutMs: 30_000 });
+            return { ok: r.ok, stdout: r.stdout, stderr: r.stderr };
+          },
+          topics: {
+            async create() {
+              return { ok: false as const, error: 'sujets non branchés' };
+            },
+            async state() {
+              return 'draft';
+            },
+            async test() {
+              return { ok: false };
+            },
+            async pr() {
+              return { ok: false };
+            },
+          },
+          session: {
+            async start() {
+              return undefined;
+            },
+            async end() {
+              return undefined;
+            },
+          },
+        })
+      : null;
+    if (board) {
+      // autoTake stays off. A row the person already took still has to leave awaiting-human.
+      const beat = () => {
+        void board.reconcile();
+      };
+      beat();
+      boardTimer = setInterval(beat, 30_000);
+      boardTimer.unref();
+    }
     const mesh = config.mesh.cell
       ? new MeshService({
           config: config.mesh,
           // le HOME de l'utilisateur (~/.config/swarph, ~/swarph_state), pas AID_HOME
-          home: process.env.HOME ?? homedir(),
+          home: userHome,
           db: opened,
           store,
           log,
+          board: board ?? undefined,
         })
       : null;
     // 08.8 : construit ici, et non dans buildServer, pour lancer le rattrapage après `listen`
@@ -236,6 +292,7 @@ export async function startDaemon(
       structural,
       indexer,
       mesh,
+      board: board ?? undefined,
       requestStop: opts.onStopRequested,
       requestUpdate: opts.onUpdateRequested,
       requestCycle: opts.onCycleRequested,
@@ -285,6 +342,7 @@ export async function startDaemon(
         agents.dispose();
         updates?.dispose();
         if (maintenanceTimer) clearInterval(maintenanceTimer);
+        if (boardTimer) clearInterval(boardTimer);
         await worker?.stop();
         await mirror.flush();
         await app.close();
